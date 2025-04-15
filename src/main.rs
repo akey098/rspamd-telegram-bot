@@ -3,6 +3,8 @@ use teloxide::prelude::*;
 use dotenv::*;
 
 mod handlers;
+mod admin;
+mod commands;
 
 #[tokio::main]
 async fn main() {
