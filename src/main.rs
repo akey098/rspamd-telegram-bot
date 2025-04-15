@@ -16,6 +16,11 @@ async fn main() {
 
     let bot = Bot::new(bot_token);
 
+    use redis::Commands;
+    let client = redis::Client::open("redis://127.0.0.1/")?;
+    let mut conn = client.get_connection()?;
+
+    run_dispatcher(bot).await;
 
     teloxide::repl(bot, move |bot: Bot, message: Message| {
         async move {
@@ -26,4 +31,6 @@ async fn main() {
         }
     })
         .await;
+
+    
 }
