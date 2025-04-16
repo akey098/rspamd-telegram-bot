@@ -3,8 +3,7 @@ use teloxide::prelude::*;
 use dotenv::*;
 
 mod handlers;
-mod admin;
-mod commands;
+mod admin_handlers;
 
 #[tokio::main]
 async fn main() {
@@ -17,20 +16,10 @@ async fn main() {
     let bot = Bot::new(bot_token);
 
     use redis::Commands;
-    let client = redis::Client::open("redis://127.0.0.1/")?;
-    let mut conn = client.get_connection()?;
+    let client = redis::Client::open("redis://127.0.0.1/");
+    let mut conn = client.expect("REASON").get_connection();
 
-    run_dispatcher(bot).await;
-
-    teloxide::repl(bot, move |bot: Bot, message: Message| {
-        async move {
-            if let Err(e) = handlers::handle_message(bot.clone(), message).await {
-                eprintln!("Error handling message: {:?}", e);
-            }
-            respond(())
-        }
-    })
-        .await;
+    admin_handlers::run_dispatcher(bot).await;
 
     
 }

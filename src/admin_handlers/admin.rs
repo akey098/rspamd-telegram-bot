@@ -1,7 +1,7 @@
 use teloxide::{prelude::*, types::InlineKeyboardButton, types::InlineKeyboardMarkup};
 use redis::Commands;
 use std::error::Error;
-use crate::commands::AdminCommand;
+use crate::admin_handlers::AdminCommand;
 
 pub async fn handle_admin_command(bot: Bot, msg: Message, cmd: AdminCommand) -> ResponseResult<()> {
     let redis_client = redis::Client::open("redis://127.0.0.1/").expect("Failed to connect to Redis");
