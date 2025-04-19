@@ -7,6 +7,7 @@ use get_if_addrs::{get_if_addrs, IfAddr};
 
 mod admin_handlers;
 mod handlers;
+mod utils;
 
 #[tokio::main]
 async fn main() {
@@ -25,22 +26,10 @@ async fn main() {
     admin_handlers::run_dispatcher(bot).await;
 }
 
-fn detect_local_ipv4() -> Option<String> {
-    if let Ok(ifaces) = get_if_addrs() {
-        for iface in ifaces {
-            if let IfAddr::V4(v4addr) = iface.addr {
-                let ip = v4addr.ip;
-                if !ip.is_loopback() {
-                    return Some(format!("{}/32", ip));
-                }
-            }
-        }
-    }
-    None
-}
+
 
 fn deploy_settings() -> io::Result<()> {
-    let ip_cidr = detect_local_ipv4().unwrap_or_else(|| "127.0.0.1/32".to_string());
+    let ip_cidr = utils::detect_local_ipv4().unwrap_or_else(|| "127.0.0.1/32".to_string());
     println!("Detected local IPv4: {}", ip_cidr);
 
     let settings = format!(r#"

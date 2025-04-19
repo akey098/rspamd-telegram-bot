@@ -45,6 +45,14 @@ pub async fn handle_message(
             "Warning user {} in chat {} about spammy behavior.",
             user_id, message.chat.id
         );
+        bot.send_message(
+            ChatId(admin_chat[0]),
+            format!(
+                "Warning user {} in chat {} about spammy behavior.",
+                user_id, message.chat.id
+            ),
+        )
+            .await?;
         
     } else {
         println!("Message is ok")
@@ -54,14 +62,7 @@ pub async fn handle_message(
     for symbol in scan_result.symbols {
         println!("{} {} {} ", symbol.0, symbol.1.score, symbol.1.metric_score);
     }
-    bot.send_message(
-        ChatId(admin_chat[0]),
-        format!(
-            "Warning user {} in chat {} about spammy behavior.",
-            user_id, message.chat.id
-        ),
-    )
-        .await?;
+    
     
     Ok(())
 }
