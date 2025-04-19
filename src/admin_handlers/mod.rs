@@ -1,7 +1,7 @@
-mod commands;
 mod admin;
+mod commands;
 mod dispatcher;
 
-pub use commands::*;
 pub use admin::*;
+pub use commands::*;
 pub use dispatcher::*;

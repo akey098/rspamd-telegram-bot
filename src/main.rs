@@ -1,9 +1,9 @@
+use dotenv::*;
 use std::env;
 use teloxide::prelude::*;
-use dotenv::*;
 
-mod handlers;
 mod admin_handlers;
+mod handlers;
 
 #[tokio::main]
 async fn main() {
@@ -15,11 +15,5 @@ async fn main() {
 
     let bot = Bot::new(bot_token);
 
-    use redis::Commands;
-    let client = redis::Client::open("redis://127.0.0.1/");
-    let mut conn = client.expect("REASON").get_connection();
-
     admin_handlers::run_dispatcher(bot).await;
-
-    
 }

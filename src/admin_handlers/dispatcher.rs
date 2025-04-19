@@ -9,7 +9,6 @@ use teloxide::types::ChatMemberStatus;
 use teloxide::utils::command::BotCommands;
 use teloxide::{Bot, RequestError};
 
-
 pub async fn message_handler(bot: Bot, msg: Message) -> Result<(), RequestError> {
     if let Some(text) = msg.text() {
         if let Ok(cmd) = AdminCommand::parse(text, "YourBotName") {
@@ -27,13 +26,18 @@ pub async fn callback_handler(bot: Bot, query: CallbackQuery) -> Result<(), Requ
             let admin_id = admin_chat.chat().id;
             let selected_chat: i64 = callback_data.parse().unwrap_or(0);
             if selected_chat != 0 {
-                let redis_client = redis::Client::open("redis://127.0.0.1/").expect("Failed to connect to Redis");
-                let mut redis_conn = redis_client.get_connection().expect("Failed to get Redis connection");
+                let redis_client =
+                    redis::Client::open("redis://127.0.0.1/").expect("Failed to connect to Redis");
+                let mut redis_conn = redis_client
+                    .get_connection()
+                    .expect("Failed to get Redis connection");
 
                 let key = format!("admin:{}:moderated_chats", admin_id);
-                let _: () = redis_conn.sadd(key, selected_chat)
+                let _: () = redis_conn
+                    .sadd(key, selected_chat)
                     .expect("Failed to add moderated chat to admin");
-                let _: () = redis_conn.sadd(format!("chat:{}:admin_chat", selected_chat), admin_id.0)
+                let _: () = redis_conn
+                    .sadd(format!("chat:{}:admin_chat", selected_chat), admin_id.0)
                     .expect("Failed to add admin chat to selected chat");
 
                 bot.answer_callback_query(query.id)
@@ -51,10 +55,7 @@ pub async fn run_dispatcher(bot: Bot) {
         .branch(Update::filter_callback_query().endpoint(callback_handler))
         .branch(Update::filter_my_chat_member().endpoint(my_chat_member_handler));
 
-    Dispatcher::builder(bot, handler)
-        .build()
-        .dispatch()
-        .await;
+    Dispatcher::builder(bot, handler).build().dispatch().await;
 }
 
 async fn add_chat_admins(
@@ -65,7 +66,8 @@ async fn add_chat_admins(
     let admins = bot.get_chat_administrators(chat_id).await?;
     for admin in admins {
         let key = format!("{}:bot_chats", admin.user.id);
-        let _: () = redis_conn.sadd(key, chat_id.0)
+        let _: () = redis_conn
+            .sadd(key, chat_id.0)
             .expect("Failed to add chat to bot_chats");
     }
     Ok(())
@@ -79,7 +81,8 @@ async fn rem_chat_admins(
     let admins = bot.get_chat_administrators(chat_id).await?;
     for admin in admins {
         let key = format!("{}:bot_chats", admin.user.id);
-        let _: () = redis_conn.srem(key, chat_id.0)
+        let _: () = redis_conn
+            .srem(key, chat_id.0)
             .expect("Failed to remove chat from bot_chats");
     }
     Ok(())
@@ -97,14 +100,11 @@ pub async fn my_chat_member_handler(
     let conn = client.get_connection().expect("Failed to connect");
 
     match new_status {
-        ChatMemberStatus::Member
-        | ChatMemberStatus::Administrator
-        | ChatMemberStatus::Owner => {
+        ChatMemberStatus::Member | ChatMemberStatus::Administrator | ChatMemberStatus::Owner => {
             // **Await** the future and propagate errors
             add_chat_admins(&bot, chat_id, conn).await?;
         }
-        ChatMemberStatus::Left
-        | ChatMemberStatus::Banned => {
+        ChatMemberStatus::Left | ChatMemberStatus::Banned => {
             rem_chat_admins(&bot, chat_id, conn).await?;
         }
         _ => {}
