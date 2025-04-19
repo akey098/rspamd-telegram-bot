@@ -50,13 +50,9 @@ pub async fn handle_message(
         println!("Message is ok")
     }
 
-    bot.send_message(
-        message.chat.id,
-        format!("Your score is {} and the action is {}", scan_result.score, scan_result.action),
-    )
-        .await?;
+   println!("Your score is {} and the action is {}", scan_result.score, scan_result.action);
     for symbol in scan_result.symbols {
-        bot.send_message(message.chat.id, format!("{} {} {} ", symbol.0, symbol.1.score, symbol.1.metric_score)).await?;
+        println!("{} {} {} ", symbol.0, symbol.1.score, symbol.1.metric_score);
     }
     bot.send_message(
         ChatId(admin_chat[0]),

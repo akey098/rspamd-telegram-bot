@@ -5,20 +5,28 @@ use teloxide::prelude::*;
 pub async fn scan_msg(msg: Message, text: String) -> Result<RspamdScanReply, RspamdError> {
     let user = msg.from.unwrap();
     let user_id = user.id.to_string();
+    let user_name = user.username.expect("REASON").to_string();
     let chat_id = msg.chat.id;
+    let chat_name = msg.chat.title().unwrap().to_string();
     let date = eml_date_from_timestamp(msg.date.timestamp());
     let text = text;
     let email = format!(
         "Date: {date}\r\n\
-        From: telegram{user}@local\r\n\
-        To: telegram{chat}@local\r\n\
+        From: telegram{user_name}@example.com\r\n\
+        To: telegram{chat_name}@example.com\r\n\
         Subject: Telegram message\r\n\
-        X-Telegram-User: {user}\r\n\
+        Message-ID: <{user_id}.{chat_id}@example.com>
+        X-Telegram-User: {user_id}\r\n\
+        MIME-Version: 1.0  
+        Content-Type: text/plain; charset=UTF-8  
+        Content-Transfer-Encoding: 8bit
         \r\n\
         {text}\r\n",
         date = date,
-        user = user_id,
-        chat = chat_id,
+        user_name = user_name,
+        chat_name = chat_name,
+        user_id = user_id,
+        chat_id = chat_id,
         text = text.replace("\n", "\r\n") // если в самом тексте тоже могут быть переводы строк
     );
     let options = Config::builder()

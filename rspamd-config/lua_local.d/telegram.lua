@@ -74,17 +74,32 @@ rspamd_config.TG_SUSPICIOUS = {
   group = "telegram"
 }
 
-rspamd_config:add_periodic(3600.0, function()
-  local function redis_cb(err, replies)
-    if not err and replies then
+rspamd_config:add_on_load(function(cfg, ev_base, worker)
+  -- Only run in the normal filtering workers
+  if worker:get_name() ~= 'normal' then
+    return
+  end
+
+  -- Schedule a task every hour (3600 seconds)
+  rspamd_config:add_periodic(ev_base, 3600.0, function()
+    -- Callback to process all `tg:*:rep` keys
+    local function redis_cb(err, replies)
+      if err then
+        rspamd_logger.errx(rspamd_config, 'Redis error while scanning reps: %1', err)
+        return
+      end
       for _, k in ipairs(replies) do
+        -- Decrement each key by 1
         rspamd_redis.make_request(nil, nil, nil,
           'DECRBY', { k, '1' })
       end
     end
-  end
 
-  -- get all reputation keys
-  rspamd_redis.make_request(nil, redis_cb, nil,
-    'KEYS', { 'tg:*:rep' })
+    -- Find all reputation keys
+    rspamd_redis.make_request(nil, redis_cb, nil,
+      'KEYS', { 'tg:*:rep' })
+
+    -- Return true so that this periodic callback stays active
+    return true
+  end)
 end)
