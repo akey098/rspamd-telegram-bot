@@ -3,5 +3,5 @@ mod commands;
 mod dispatcher;
 
 pub use admin::*;
-pub use commands::*;
+use commands::*;
 pub use dispatcher::*;

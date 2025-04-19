@@ -5,16 +5,17 @@ rspamd_config.TG_FLOOD = {
     local user = task:get_header("X-Telegram-User") or task:get_user()
     if not user then return false end
     local key = "tg:" .. user .. ":count"
-    local max_msgs = 5
+    local max_msgs = 30
     local function incr_cb(err, data)
       if err then
         task:insert_result("TG_FLOOD", 0.0); return
       end
       local count = tonumber(data or "0") or 0
       if count > max_msgs then
-        task:insert_result("TG_FLOOD", 1.0)  -- user sent >5 messages in interval
-        -- Optionally increase user's spam incident count:
-        rspamd_redis.make_request(task, nil, nil, 'INCR', {"tg:"..user..":rep"})
+        task:insert_result("TG_FLOOD", 1.0)
+        local key = "tg:" .. user .. ":rep"
+        rspamd_redis.make_request(task, nil, nil, 'INCR', { key })
+        rspamd_redis.make_request(task, nil, nil, 'EXPIRE', { key, '86400' })
       end
       if count == 1 then
         -- set 60s expiration on the counter on first message
@@ -55,20 +56,35 @@ rspamd_config.TG_SUSPICIOUS = {
   callback = function(task)
     local user = task:get_user() or task:get_header("X-Telegram-User")
     if not user then return false end
-    local rep_key = "user:reputation_scores"
+    local rep_key = "tg:"..user..":rep"
     local function redis_cb(err, data)
       if err or not data then return end
       local score = tonumber(data) or 0
-      if score <= -10 then
+      if score > 9 then
         -- user has bad reputation (<= -10), add a symbol
         task:insert_result("USER_REP_BAD", 1.0, tostring(score))
       end
     end
     rspamd_redis.make_request(task,  -- asynchronous Redis request
-      nil, redis_cb, 'HGET', {rep_key, user})
+      nil, redis_cb, 'GET', { rep_key })
     return true  -- task will be resumed after Redis callback
   end,
   score = 4.0,
   description = "User has a bad spam reputation",
   group = "telegram"
 }
+
+rspamd_config:add_periodic(3600.0, function()
+  local function redis_cb(err, replies)
+    if not err and replies then
+      for _, k in ipairs(replies) do
+        rspamd_redis.make_request(nil, nil, nil,
+          'DECRBY', { k, '1' })
+      end
+    end
+  end
+
+  -- get all reputation keys
+  rspamd_redis.make_request(nil, redis_cb, nil,
+    'KEYS', { 'tg:*:rep' })
+end)

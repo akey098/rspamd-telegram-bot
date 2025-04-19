@@ -1,4 +1,4 @@
-use teloxide::{prelude::*, utils::command::BotCommands};
+use teloxide::{utils::command::BotCommands};
 
 #[derive(BotCommands, Clone)]
 #[command(rename_rule = "lowercase", description = "Admin commands:")]

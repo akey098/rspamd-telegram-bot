@@ -14,7 +14,7 @@ pub async fn message_handler(bot: Bot, msg: Message) -> Result<(), RequestError>
         if let Ok(cmd) = AdminCommand::parse(text, "YourBotName") {
             handle_admin_command(bot.clone(), msg.clone(), cmd).await?;
         } else {
-            handle_message(bot.clone(), msg.clone()).await;
+            let _ = handle_message(bot.clone(), msg.clone()).await;
         }
     }
     Ok(())
