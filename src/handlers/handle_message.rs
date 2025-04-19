@@ -1,5 +1,6 @@
 use crate::handlers::scan_msg;
 use std::error::Error;
+use redis::Commands;
 use teloxide::prelude::*;
 
 pub async fn handle_message(
@@ -13,18 +14,21 @@ pub async fn handle_message(
         return Ok(());
     };
     let result =  scan_msg(message.clone(), text).await;
-
     let scan_result = result.ok().unwrap();
-
-
+    let redis_client = redis::Client::open("redis://127.0.0.1/").expect("Failed to connect to Redis");
+    let mut redis_conn = redis_client.get_connection().expect("Failed to get Redis connection");
+    let user_id = message.from.unwrap().id;
+    let chat_id = message.chat.id;
+    let key = format!("chat:{}:admin_chat", chat_id);
+    let admin_chat: Vec<i64> = redis_conn.smembers(key)?;
     if scan_result.score >= 10.0 || scan_result.symbols.contains_key("TG_FLOOD") || scan_result.symbols.contains_key("TG_SUSPICIOUS") {
-        // For instance, delete the message using your async Telegram API client.
         println!("Deleting message {} from chat {} because it appears to be spam.", message.id, message.chat.id);
         bot.delete_message(message.chat.id, message.id).await?;
+        bot.send_message(ChatId(admin_chat[0]), format!("Deleting message {} from user {} in chat {} for spam.", message.id, user_id, message.chat.id)).await?;
     } else if scan_result.score >= 5.0 {
-        // Optionally, warn the user.
-        println!("Warning user {} in chat {} about spammy behavior.", message.from.unwrap().id, message.chat.id);
+        println!("Warning user {} in chat {} about spammy behavior.", user_id, message.chat.id);
         bot.send_message(message.chat.id, "You are behaving spammy. Further actions will result ban.").await?;
+        bot.send_message(ChatId(admin_chat[0]), format!("Warning user {} in chat {} about spammy behavior.", user_id, message.chat.id)).await?;
     } else {
         println!("Message is ok")
     }
