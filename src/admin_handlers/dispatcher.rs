@@ -58,35 +58,6 @@ pub async fn run_dispatcher(bot: Bot) {
     Dispatcher::builder(bot, handler).build().dispatch().await;
 }
 
-async fn add_chat_admins(
-    bot: &Bot,
-    chat_id: ChatId,
-    mut redis_conn: redis::Connection,
-) -> Result<(), RequestError> {
-    let admins = bot.get_chat_administrators(chat_id).await?;
-    for admin in admins {
-        let key = format!("{}:bot_chats", admin.user.id);
-        let _: () = redis_conn
-            .sadd(key, chat_id.0)
-            .expect("Failed to add chat to bot_chats");
-    }
-    Ok(())
-}
-
-async fn rem_chat_admins(
-    bot: &Bot,
-    chat_id: ChatId,
-    mut redis_conn: redis::Connection,
-) -> Result<(), RequestError> {
-    let admins = bot.get_chat_administrators(chat_id).await?;
-    for admin in admins {
-        let key = format!("{}:bot_chats", admin.user.id);
-        let _: () = redis_conn
-            .srem(key, chat_id.0)
-            .expect("Failed to remove chat from bot_chats");
-    }
-    Ok(())
-}
 
 pub async fn my_chat_member_handler(
     bot: Bot,
@@ -97,15 +68,30 @@ pub async fn my_chat_member_handler(
 
     // Open Redis once
     let client = redis::Client::open("redis://127.0.0.1/").expect("failed to get redis client.");
-    let conn = client.get_connection().expect("Failed to connect");
+    let mut conn = client.get_connection().expect("Failed to connect");
+    let key = format!("tg:{}:rep", update.new_chat_member.user.username.unwrap().to_string());
+    let admin_key = format!("{}:bot_chats", update.new_chat_member.user.id);
 
     match new_status {
         ChatMemberStatus::Member | ChatMemberStatus::Administrator | ChatMemberStatus::Owner => {
-            // **Await** the future and propagate errors
-            add_chat_admins(&bot, chat_id, conn).await?;
+            if new_status == ChatMemberStatus::Administrator || new_status == ChatMemberStatus::Owner {
+                let _: () = conn
+                    .sadd(admin_key, chat_id.0)
+                    .expect("Failed to add chat to bot_chats");
+            }
+            let _: () = conn
+                .set(key, 0)
+                .expect("Failed to add chat to bot_chats");
         }
         ChatMemberStatus::Left | ChatMemberStatus::Banned => {
-            rem_chat_admins(&bot, chat_id, conn).await?;
+            if update.old_chat_member.status() == ChatMemberStatus::Administrator || update.old_chat_member.status() == ChatMemberStatus::Owner {
+                let _: () = conn
+                    .srem(admin_key, chat_id.0)
+                    .expect("Failed to remove chat from bot_chats");
+            }
+            let _: () = conn
+                .del(key)
+                .expect("Failed to add chat to bot_chats");
         }
         _ => {}
     }

@@ -71,7 +71,10 @@ pub async fn handle_admin_command(bot: Bot, msg: Message, cmd: AdminCommand) -> 
                 bot.send_message(chat_id, "Stats: [Placeholder]").await?;
             }
             AdminCommand::Reputation { user } => {
-                bot.send_message(chat_id, format!("Reputation for {}: [Placeholder]", user))
+                let user_rep: String = redis_conn
+                    .get(format!("tg:{}:rep", user))
+                    .expect("Failed to get reputation");
+                bot.send_message(chat_id, format!("Reputation for {}: {}", user, user_rep))
                     .await?;
             }
             AdminCommand::Recent => {
