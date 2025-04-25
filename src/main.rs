@@ -3,7 +3,6 @@ use std::{env, fs, io};
 use std::path::Path;
 use std::process::Command;
 use teloxide::prelude::*;
-use get_if_addrs::{get_if_addrs, IfAddr};
 
 mod admin_handlers;
 mod handlers;

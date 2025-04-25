@@ -77,7 +77,7 @@ pub async fn run_dispatcher(bot: Bot) {
 
 
 pub async fn my_chat_member_handler(
-    bot: Bot,
+    _bot: Bot,
     update: ChatMemberUpdated,
 ) -> Result<(), RequestError> {
     let new_status = update.new_chat_member.status();
