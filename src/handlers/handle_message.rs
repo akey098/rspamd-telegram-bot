@@ -32,33 +32,55 @@ pub async fn handle_message(
             message.id, message.chat.id
         );
         bot.delete_message(message.chat.id, message.id).await?;
-        bot.send_message(
-            ChatId(admin_chat[0]),
-            format!(
-                "Deleting message {} from user {} in chat {} for spam.",
-                message.id, user_id, message.chat.id
-            ),
-        )
-        .await?;
+        if admin_chat.len() != 0 {
+            bot.send_message(
+                ChatId(admin_chat[0]),
+                format!(
+                    "Deleting message {} from user {} in chat {} for spam.",
+                    message.id, user_id, message.chat.id
+                ),
+            )
+            .await?;
+        } else {
+            bot.send_message(
+                message.chat.id,
+                format!(
+                    "Deleting message {} from user {} in chat {} for spam.",
+                    message.id, user_id, message.chat.id
+                ),
+            )
+            .await?;
+        }
     } else if scan_result.score >= 5.0 {
         println!(
             "Warning user {} in chat {} about spammy behavior.",
             user_id, message.chat.id
         );
-        bot.send_message(
-            ChatId(admin_chat[0]),
-            format!(
-                "Warning user {} in chat {} about spammy behavior.",
-                user_id, message.chat.id
-            ),
-        )
+        if admin_chat.len() != 0 {
+            bot.send_message(
+                ChatId(admin_chat[0]),
+                format!(
+                    "Deleting message {} from user {} in chat {} for spam.",
+                    message.id, user_id, message.chat.id
+                ),
+            )
             .await?;
+        } else {
+            bot.send_message(
+                message.chat.id,
+                format!(
+                    "Deleting message {} from user {} in chat {} for spam.",
+                    message.id, user_id, message.chat.id
+                ),
+            )
+            .await?;
+        }
         
     } else {
         println!("Message is ok")
     }
 
-   println!("Your score is {} and the action is {}", scan_result.score, scan_result.action);
+    println!("Your score is {} and the action is {}", scan_result.score, scan_result.action);
     for symbol in scan_result.symbols {
         println!("{} {} {} ", symbol.0, symbol.1.score, symbol.1.metric_score);
     }

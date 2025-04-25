@@ -1,4 +1,4 @@
-use std::{env, fs, io};
+use std::{fs, io};
 use std::path::Path;
 use std::process::Command;
 use teloxide::prelude::*;
@@ -16,9 +16,7 @@ async fn main() {
         eprintln!("Failed to sync Rspamd config: {}", e);
     }
 
-    let bot_token = env::var("BOT_TOKEN").expect("BOT_TOKEN must be set in .env file");
-
-    let bot = Bot::new(bot_token);
+    let bot = Bot::from_env();
 
     admin_handlers::run_dispatcher(bot).await;
 }
