@@ -9,7 +9,6 @@ tokio = { version = "1", features = ["full"] }
 teloxide = { version = "0.14.1", features = ["macros"]  }
 pretty_env_logger = "0.5.0"
 log = "0.4"
-dotenv = "0.15"
 redis = "*"
 anyhow = "1.0.98"
 chrono = "0.4.40"

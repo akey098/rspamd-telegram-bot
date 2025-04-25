@@ -1,4 +1,3 @@
-use dotenv::*;
 use std::{env, fs, io};
 use std::path::Path;
 use std::process::Command;
@@ -11,7 +10,6 @@ mod utils;
 #[tokio::main]
 async fn main() {
     pretty_env_logger::init();
-    dotenv().ok();
     log::info!("Starting the spam detection bot...");
 
     if let Err(e) = deploy_settings() {
