@@ -1,6 +1,6 @@
 use crate::admin_handlers::{handle_admin_command, AdminCommand};
 use crate::handlers::handle_message;
-use redis::Commands;
+use redis::{Commands, RedisResult};
 use teloxide::dispatching::{Dispatcher, UpdateFilterExt};
 use teloxide::dptree;
 use teloxide::payloads::AnswerCallbackQuerySetters;
@@ -11,7 +11,24 @@ use teloxide::{Bot, RequestError};
 
 pub async fn message_handler(bot: Bot, msg: Message) -> Result<(), RequestError> {
     if let Some(text) = msg.text() {
-        if let Ok(cmd) = AdminCommand::parse(text, "YourBotName") {
+        let client = redis::Client::open("redis://127.0.0.1/").expect("failed to get redis client.");
+        let mut conn = client.get_connection().expect("Failed to connect");
+        let msg_cloned = msg.clone();
+        let username = msg_cloned.from.unwrap().username.unwrap();
+        let key = format!("tg:{}:rep", username);
+
+        let user_rep: RedisResult<i64> = conn.get(&key);
+
+        match user_rep {
+            Ok(_) => {}
+            Err(_) => {
+                let _: () = conn
+                    .set(key, 0)
+                    .expect("Failed to update user's reputation");
+            }
+        }
+        
+        if let Ok(cmd) = AdminCommand::parse(text, "rspamd-bot") {
             handle_admin_command(bot.clone(), msg.clone(), cmd).await?;
         } else {
             let _ = handle_message(bot.clone(), msg.clone()).await;
@@ -81,7 +98,7 @@ pub async fn my_chat_member_handler(
             }
             let _: () = conn
                 .set(key, 0)
-                .expect("Failed to add chat to bot_chats");
+                .expect("Failed to update user's reputation");
         }
         ChatMemberStatus::Left | ChatMemberStatus::Banned => {
             if update.old_chat_member.status() == ChatMemberStatus::Administrator || update.old_chat_member.status() == ChatMemberStatus::Owner {
@@ -91,7 +108,7 @@ pub async fn my_chat_member_handler(
             }
             let _: () = conn
                 .del(key)
-                .expect("Failed to add chat to bot_chats");
+                .expect("Failed to remove user's reputation");
         }
         _ => {}
     }

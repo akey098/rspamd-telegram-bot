@@ -1,5 +1,5 @@
 use crate::admin_handlers::AdminCommand;
-use redis::Commands;
+use redis::{Commands, RedisResult};
 use teloxide::types::{Chat, ChatMemberStatus};
 use teloxide::{prelude::*, types::InlineKeyboardButton, types::InlineKeyboardMarkup};
 
@@ -71,11 +71,20 @@ pub async fn handle_admin_command(bot: Bot, msg: Message, cmd: AdminCommand) -> 
                 bot.send_message(chat_id, "Stats: [Placeholder]").await?;
             }
             AdminCommand::Reputation { user } => {
-                let user_rep: String = redis_conn
-                    .get(format!("tg:{}:rep", user))
-                    .expect("Failed to get reputation");
-                bot.send_message(chat_id, format!("Reputation for {}: {}", user, user_rep))
-                    .await?;
+                let key = format!("tg:{}:rep", user);
+
+                let user_rep: RedisResult<i64> = redis_conn.get(&key);
+
+                match user_rep {
+                    Ok(rep) => {
+                        bot.send_message(chat_id, format!("Reputation for {}: {}", user, rep))
+                            .await?;
+                    }
+                    Err(_) => {
+                        bot.send_message(chat_id, format!("Reputation for {}: 0", user))
+                            .await?;
+                    }
+                }
             }
             AdminCommand::Recent => {
                 bot.send_message(chat_id, "Recent flagged messages: [Placeholder]")
