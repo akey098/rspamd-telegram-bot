@@ -135,7 +135,7 @@ pub async fn my_chat_member_handler(
         for admin in admins {
             let admin_key = format!("{}:bot_chats", admin);
             let _: () = conn
-                            .srem(admin_key, update.chat.username().unwrap())
+                            .srem(admin_key, update.chat.title().unwrap())
                             .expect("Failed to remove admin from bot_chats");
         }
     }
@@ -146,7 +146,7 @@ pub async fn my_chat_member_handler(
                 let admin_key = format!("{}:bot_chats", admin.user.id);
                 if !admin.user.is_bot {
                     let _: () = conn
-                            .sadd(admin_key, update.chat.username().unwrap())
+                            .sadd(admin_key, update.chat.title().unwrap())
                             .expect("Failed to add admin to bot_chats");
                     let _: () = conn
                         .sadd(admins_key.clone(), admin.user.username.unwrap())

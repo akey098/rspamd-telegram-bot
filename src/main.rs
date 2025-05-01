@@ -71,12 +71,12 @@ fn deploy_settings() -> io::Result<()> {
                   String::from_utf8_lossy(&test.stderr));
     }
 
-    let reload = Command::new("rspamadm")
-        .arg("control")
-        .arg("reload")
+    let reload = Command::new("service")
+        .arg("rspamd")
+        .arg("restart")
         .status()?;
     if !reload.success() {
-        eprintln!("rspamadm control reload failed");
+        eprintln!("rspamd restart failed");
     }
 
     Ok(())
