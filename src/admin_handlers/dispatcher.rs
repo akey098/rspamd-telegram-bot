@@ -23,7 +23,7 @@ pub async fn message_handler(bot: Bot, msg: Message) -> Result<(), RequestError>
             Ok(_) => {}
             Err(_) => {
                 let _: () = conn
-                    .set(key, 0)
+                    .incr(key, 1)
                     .expect("Failed to update user's reputation");
             }
         }

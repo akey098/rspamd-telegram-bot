@@ -45,7 +45,7 @@ fn deploy_settings() -> io::Result<()> {
     println!("Wrote dynamic settings to {}", settings_dst.display());
 
     println!("Current dir: {}", std::env::current_dir()?.display());
-    let src_lua = Path::new("../../rspamd-config/lua_local.d");
+    let src_lua = Path::new("../../rspamd-config/lua.local.d");
     let dst_lua = Path::new("/etc/rspamd/lua.local.d");
     if src_lua.exists() {
         fs::create_dir_all(&dst_lua)?;
