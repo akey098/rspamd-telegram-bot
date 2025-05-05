@@ -1,59 +1,32 @@
-# docker/Dockerfile
-
-# 1) Builder: compile your Rust bot
-FROM rust:1.86-slim AS builder
-
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-      pkg-config \
-      libssl-dev && \
-    rm -rf /var/lib/apt/lists/*
-
-WORKDIR /usr/src/rspamd-telegram-bot
+# Stage 1: Build the Telegram bot binary
+FROM rust:latest AS builder
+WORKDIR /usr/src/app
 COPY Cargo.toml Cargo.lock ./
-
-# Pre–fetch deps
-RUN mkdir src && \
-    echo 'fn main() { println!("dummy"); }' > src/main.rs && \
-    cargo build --release && \
-    rm -rf src
-
-COPY . .
+COPY ../Cargo.toml ../Cargo.lock ./
+RUN mkdir src && echo 'fn main() { }' > src/main.rs
 RUN cargo build --release
 
-# 2) Runtime: Debian + Rspamd + your bot
-FROM debian:bookworm-slim
+RUN rm src/main.rs
+COPY ../src ./src
+RUN cargo build --release
 
-# a) Install tools for adding the Rspamd repo
+
+# Stage 2: Runtime image with Rspamd and Redis
+FROM rspamd/rspamd:latest
+USER root
+# Install redis server
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-      lsb-release \
-      wget \
-      gnupg \
-      ca-certificates && \
+    apt-get install -y redis-server && \
     rm -rf /var/lib/apt/lists/*
 
-# b) Add Rspamd apt-stable repository using a keyring
-RUN mkdir -p /etc/apt/keyrings && \
-    wget -O- https://rspamd.com/apt-stable/gpg.key \
-      | gpg --dearmor > /etc/apt/keyrings/rspamd.gpg && \
-    echo "deb [signed-by=/etc/apt/keyrings/rspamd.gpg] \
-      http://rspamd.com/apt-stable/ $(lsb_release -c -s) main" \
-      > /etc/apt/sources.list.d/rspamd.list && \
-    echo "deb-src [signed-by=/etc/apt/keyrings/rspamd.gpg] \
-      http://rspamd.com/apt-stable/ $(lsb_release -c -s) main" \
-      >> /etc/apt/sources.list.d/rspamd.list
+# Copy the compiled bot and Lua rules into the image
+COPY --from=builder /usr/src/app/target/release/rspamd-telegram-bot /usr/local/bin/rspamd-telegram-bot
+COPY rspamd-config/lua.local.d/telegram.lua /etc/rspamd/lua.local.d/telegram.lua
 
-# c) Install Rspamd (will pull in its libssl) and clean up
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends rspamd && \
-    rm -rf /var/lib/apt/lists/*
+# Expose ports if needed (11333 for Rspamd, 6379 for Redis, etc.)
+EXPOSE 11333 6379
 
-WORKDIR /usr/src/rspamd-telegram-bot/target/release
-
-# Copy the bot binary and the rspamd-config directory
-COPY --from=builder /usr/src/rspamd-telegram-bot/target/release/rspamd-telegram-bot .
-COPY --from=builder /usr/src/rspamd-telegram-bot/rspamd-config ../rspamd-config
-
-# Entrypoint: reads BOT_TOKEN from the environment
-CMD ["./rspamd-telegram-bot"]
+# Start all services (Redis, Rspamd, and the bot)
+CMD service redis-server start \
+  && service rspamd start \
+  && exec /usr/local/bin/rspamd-telegram-bot
