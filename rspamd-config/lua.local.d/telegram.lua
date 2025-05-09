@@ -1,15 +1,19 @@
 local rspamd_redis = require "rspamd_redis"
 
-rspamd_config.TG_FLOOD = {
-  callback = function(task)
-    local user_id = tostring(task:get_user_id() or "")
+rspamd_config:register_symbol('TG_FLOOD', 1.0, function(task)
+    local user_id = tostring(task:get_header('X-Telegram-User', true) or "")
     if user_id == "" then return false end
     local redis_key = 'tg:user:' .. user_id .. ':flood'
     -- Define callback to be called when Redis returns
-    local function flood_cb(task, err, data)
+    local function flood_cb(err, data)
       if err or not data then return end
       local count = tonumber(data) or 0
       if count > 5 then
+        local stats_key = 'tg:users:' .. user_id
+        rspamd_redis.make_request({task=task, host="127.0.0.1:6379",
+          cmd='HINCRBY', args={stats_key, 'spam_count', '1'}, callback=function() end})
+        rspamd_redis.make_request({task=task, host="127.0.0.1:6379",
+          cmd='HINCRBY', args={stats_key, 'rep', '1'}, callback=function() end})
         task:insert_result('TG_FLOOD', 1.0)
       end
     end
@@ -18,21 +22,15 @@ rspamd_config.TG_FLOOD = {
       cmd='INCR', args={redis_key}, callback=flood_cb})
     rspamd_redis.make_request({task=task, host="127.0.0.1:6379",
       cmd='EXPIRE', args={redis_key, '60'}, callback=function() end})
-    local stats_key = 'tg:users:' .. user_id
-    rspamd_redis.make_request({task=task, host="127.0.0.1:6379",
-      cmd='HINCRBY', args={stats_key, 'spam_count', '1'}, callback=function() end})
-    rspamd_redis.make_request({task=task, host="127.0.0.1:6379",
-      cmd='HINCRBY', args={stats_key, 'rep', '1'}, callback=function() end})
-    return false  -- return false so symbol is only added in callback
-  end,
-  score = 1.0,
-  description = 'Telegram message flood'
-}
+    
+  end)
+
+  rspamd_config:set_metric_symbol('TG_FLOOD', 1.2, 'tg flood')
 
 
 rspamd_config.TG_REPEAT = {
   callback = function(task)
-    local user_id = tostring(task:get_user_id() or "")
+    local user_id = tostring(task:get_header('X-Telegram-User', true) or "")
     local msg = task:get_content() or ""
     local short = msg:sub(1, 100)  -- limit length
     if user_id == "" or short == "" then return false end
@@ -60,7 +58,7 @@ rspamd_config.TG_REPEAT = {
 
 rspamd_config.TG_SUSPICIOUS = {
   callback = function(task)
-    local user_id = tostring(task:get_user_id() or "")
+    local user_id = tostring(task:get_header('X-Telegram-User', true) or "")
     if user_id == "" then return false end
     local spam_key = 'tg:user:' .. user_id .. ':spam_count'
     -- Increment total spam count for this user
@@ -86,7 +84,7 @@ rspamd_config.TG_SUSPICIOUS = {
 
 rspamd_config.TG_STATS = {
   callback = function(task)
-    local user = task:get_user_id() or ""
+    local user = task:get_header('X-Telegram-User', true) or ""
     local stats_key = 'tg:users:' .. user
     local function stats_cb(task, err, data)
       if err or not data then return end
