@@ -31,8 +31,8 @@ pub async fn handle_admin_command(bot: Bot, msg: Message, cmd: AdminCommand) -> 
                 let _: () = redis_conn
                     .sadd(user_id.to_string() + ":admin_chats", chat_id.0)
                     .expect("Failed to add chat to admin_chats");
-
-                let bot_chats: Vec<i64> = redis_conn
+                
+                let bot_chats: Vec<String> = redis_conn
                     .smembers(user_id.to_string() + ":bot_chats")
                     .unwrap_or_else(|_| Vec::new());
 

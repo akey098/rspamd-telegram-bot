@@ -15,15 +15,15 @@ pub async fn message_handler(bot: Bot, msg: Message) -> Result<(), RequestError>
         let mut conn = client.get_connection().expect("Failed to connect");
         let msg_cloned = msg.clone();
         let username = msg_cloned.from.unwrap().username.unwrap();
-        let key = format!("tg:{}:rep", username);
+        let key = format!("tg:users:{}", username);
 
-        let user_rep: RedisResult<i64> = conn.get(&key);
+        let user_rep: RedisResult<i64> = conn.hget(&key, "rep");
 
         match user_rep {
             Ok(_) => {}
             Err(_) => {
                 let _: () = conn
-                    .incr(key, 1)
+                    .hincr(key, "rep",1)
                     .expect("Failed to update user's reputation");
             }
         }
@@ -41,20 +41,21 @@ pub async fn callback_handler(bot: Bot, query: CallbackQuery) -> Result<(), Requ
     if let Some(callback_data) = query.data {
         if let Some(admin_chat) = query.message {
             let admin_id = admin_chat.chat().id;
-            let selected_chat: i64 = callback_data.parse().unwrap_or(0);
-            if selected_chat != 0 {
+            let selected_chat: String = callback_data.parse().unwrap_or("".to_string());
+            if selected_chat != "" {
                 let redis_client =
                     redis::Client::open("redis://127.0.0.1/").expect("Failed to connect to Redis");
                 let mut redis_conn = redis_client
                     .get_connection()
                     .expect("Failed to get Redis connection");
-
+                let cloned_chat = selected_chat.clone();
                 let key = format!("admin:{}:moderated_chats", admin_id);
                 let _: () = redis_conn
                     .sadd(key, selected_chat)
                     .expect("Failed to add moderated chat to admin");
+                
                 let _: () = redis_conn
-                    .sadd(format!("chat:{}:admin_chat", selected_chat), admin_id.0)
+                    .sadd(format!("chat:{}:admin_chat", cloned_chat), admin_id.0)
                     .expect("Failed to add admin chat to selected chat");
 
                 bot.answer_callback_query(query.id)
@@ -86,7 +87,7 @@ pub async fn chat_member_handler(
 
     let client = redis::Client::open("redis://127.0.0.1/").expect("failed to get redis client.");
     let mut conn = client.get_connection().expect("Failed to connect");
-    let key = format!("tg:{}:rep", update.new_chat_member.user.username.unwrap().to_string());
+    let key = format!("tg:users:{}", update.new_chat_member.user.username.unwrap().to_string());
     let admin_key = format!("{}:bot_chats", update.new_chat_member.user.id);
 
     match new_status {
@@ -99,7 +100,7 @@ pub async fn chat_member_handler(
                 }
             }
             let _: () = conn
-                .set(key, 0)
+                .hset(key, "rep", 0)
                 .expect("Failed to update user's reputation");
         }
         ChatMemberStatus::Left | ChatMemberStatus::Banned => {

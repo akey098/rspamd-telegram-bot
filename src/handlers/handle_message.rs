@@ -60,7 +60,7 @@ pub async fn handle_message(
             bot.send_message(
                 ChatId(admin_chat[0]),
                 format!(
-                    "Deleting message {} from user {} in chat {} for spam.",
+                    "Warning message {} from user {} in chat {} is looks like spam.",
                     message.id, user_id, message.chat.id
                 ),
             )
@@ -69,7 +69,7 @@ pub async fn handle_message(
             bot.send_message(
                 message.chat.id,
                 format!(
-                    "Deleting message {} from user {} in chat {} for spam.",
+                    "Warning message {} from user {} in chat {} is looks like spam.",
                     message.id, user_id, message.chat.id
                 ),
             )
