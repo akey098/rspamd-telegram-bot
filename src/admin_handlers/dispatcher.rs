@@ -41,21 +41,20 @@ pub async fn callback_handler(bot: Bot, query: CallbackQuery) -> Result<(), Requ
     if let Some(callback_data) = query.data {
         if let Some(admin_chat) = query.message {
             let admin_id = admin_chat.chat().id;
-            let selected_chat: String = callback_data.parse().unwrap_or("".to_string());
-            if selected_chat != "" {
+            let selected_chat: i64 = callback_data.parse().unwrap_or(0);
+            if selected_chat != 0 {
                 let redis_client =
                     redis::Client::open("redis://127.0.0.1/").expect("Failed to connect to Redis");
                 let mut redis_conn = redis_client
                     .get_connection()
                     .expect("Failed to get Redis connection");
-                let cloned_chat = selected_chat.clone();
                 let key = format!("admin:{}:moderated_chats", admin_id);
                 let _: () = redis_conn
-                    .sadd(key, selected_chat)
+                    .sadd(key, selected_chat.clone())
                     .expect("Failed to add moderated chat to admin");
                 
                 let _: () = redis_conn
-                    .sadd(format!("chat:{}:admin_chat", cloned_chat), admin_id.0)
+                    .sadd(format!("chat:{}:admin_chat", selected_chat.clone()), admin_id.0)
                     .expect("Failed to add admin chat to selected chat");
 
                 bot.answer_callback_query(query.id)
@@ -84,10 +83,11 @@ pub async fn chat_member_handler(
 ) -> Result<(), RequestError> {
     let new_status = update.new_chat_member.status();
     let chat_id = ChatId(update.chat.id.0);
+    let username = update.new_chat_member.user.username.as_ref().unwrap();
 
     let client = redis::Client::open("redis://127.0.0.1/").expect("failed to get redis client.");
     let mut conn = client.get_connection().expect("Failed to connect");
-    let key = format!("tg:users:{}", update.new_chat_member.user.username.unwrap().to_string());
+    let key = format!("tg:users:{}", update.new_chat_member.user.id.0);
     let admin_key = format!("{}:bot_chats", update.new_chat_member.user.id);
 
     match new_status {
@@ -95,24 +95,26 @@ pub async fn chat_member_handler(
             if new_status == ChatMemberStatus::Administrator || new_status == ChatMemberStatus::Owner {
                 if !update.new_chat_member.user.is_bot {
                     let _: () = conn
-                        .sadd(admin_key, chat_id.0)
+                        .sadd(admin_key.clone(), chat_id.0)
                         .expect("Failed to add chat to bot_chats");
                 }
             }
-            let _: () = conn
-                .hset(key, "rep", 0)
-                .expect("Failed to update user's reputation");
+            let _: () = conn.hset(key.clone(), "rep", 0)
+                .expect("Failed to set rep");
+
+            let _: () = conn.hset(key.clone(), "username", &username)
+                .expect("Failed to set username");
         }
         ChatMemberStatus::Left | ChatMemberStatus::Banned => {
             if update.old_chat_member.status() == ChatMemberStatus::Administrator || update.old_chat_member.status() == ChatMemberStatus::Owner {
                 if !update.new_chat_member.user.is_bot {
                     let _: () = conn
-                        .srem(admin_key, chat_id.0)
+                        .srem(admin_key.clone(), chat_id.0)
                         .expect("Failed to remove chat from bot_chats");
                 }
             }
             let _: () = conn
-                .del(key)
+                .del(key.clone())
                 .expect("Failed to remove user's reputation");
         }
         _ => {}
@@ -128,7 +130,8 @@ pub async fn my_chat_member_handler(
     let client = redis::Client::open("redis://127.0.0.1/").expect("failed to get redis client.");
     let mut conn = client.get_connection().expect("Failed to connect");
     let chat_id = ChatId(update.chat.id.0);
-    let admins_key = format!("{}:admins", chat_id);
+    let admins_key = format!("{}:admins", update.chat.id.0);
+    let chat_key = format!("tg:chats:{}", update.chat.id.0);
     if update.new_chat_member.status() == ChatMemberStatus::Banned || update.new_chat_member.status() == ChatMemberStatus::Left{
         let admins: Vec<String> = conn
         .smembers(admins_key.clone())
@@ -136,33 +139,39 @@ pub async fn my_chat_member_handler(
         for admin in admins {
             let admin_key = format!("{}:bot_chats", admin);
             let _: () = conn
-                            .srem(admin_key, update.chat.title().unwrap())
+                            .srem(admin_key, update.chat.id.0)
                             .expect("Failed to remove admin from bot_chats");
         }
-    }
-    match bot.get_chat_administrators(chat_id).await {
-        Ok(admins) => {
-            for admin in admins {
-                log::info!("Admin: {:?}", admin.user.username);
-                let admin_key = format!("{}:bot_chats", admin.user.id);
-                if !admin.user.is_bot {
-                    let _: () = conn
-                            .sadd(admin_key, update.chat.title().unwrap())
-                            .expect("Failed to add admin to bot_chats");
-                    let _: () = conn
-                        .sadd(admins_key.clone(), admin.user.username.unwrap())
-                        .expect("Failed to add chat to bot_chats");
+        let _: () = conn
+            .del(chat_key)
+            .expect("Failed to delete chat");
+    } else {
+        let _: () = conn
+            .hset(chat_key, "name", update.chat.title().unwrap())
+            .expect("Failed to set up chat key");
+        match bot.get_chat_administrators(chat_id).await {
+            Ok(admins) => {
+                for admin in admins {
+                    log::info!("Admin: {:?}", admin.user.username);
+                    let admin_key = format!("{}:bot_chats", admin.user.id);
+                    if !admin.user.is_bot {
+                        let _: () = conn
+                                .sadd(admin_key, update.chat.id.0)
+                                .expect("Failed to add admin to bot_chats");
+                        let _: () = conn
+                            .sadd(admins_key.clone(), admin.user.id.0)
+                            .expect("Failed to add chat to bot_chats");
+                    }
                 }
             }
-        }
-        Err(err) => {
-            log::error!("Could not fetch admins for {}: {:?}", chat_id, err);
-            // let the group know (if you want):
-            let _ = bot.send_message(
-                chat_id,
-                "Bot does not have permission to list administrators. \
-                 Please make sure I’m still in the group and have the right privileges."
-            ).await;
+            Err(err) => {
+                log::error!("Could not fetch admins for {}: {:?}", chat_id, err);
+                let _ = bot.send_message(
+                    chat_id,
+                    "Bot does not have permission to list administrators. \
+                    Please make sure I’m still in the group and have the right privileges."
+                ).await;
+            }
         }
     }
     Ok(())

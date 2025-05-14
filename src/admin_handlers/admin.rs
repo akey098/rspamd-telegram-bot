@@ -32,14 +32,17 @@ pub async fn handle_admin_command(bot: Bot, msg: Message, cmd: AdminCommand) -> 
                     .sadd(user_id.to_string() + ":admin_chats", chat_id.0)
                     .expect("Failed to add chat to admin_chats");
                 
-                let bot_chats: Vec<String> = redis_conn
+                let bot_chats: Vec<i64> = redis_conn
                     .smembers(user_id.to_string() + ":bot_chats")
                     .unwrap_or_else(|_| Vec::new());
 
                 let mut rows: Vec<Vec<InlineKeyboardButton>> = Vec::new();
                 for chat in bot_chats {
+                    let chat_name: String = redis_conn
+                        .hget(format!("tg:chats:{}", chat), "name")
+                        .expect("Failed to get chat name");
                     rows.push(vec![InlineKeyboardButton::callback(
-                        format!("Chat: {}", chat),
+                        format!("Chat: {}", chat_name),
                         chat.to_string(),
                     )]);
                 }
