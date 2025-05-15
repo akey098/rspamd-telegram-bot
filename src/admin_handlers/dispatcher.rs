@@ -5,7 +5,7 @@ use teloxide::dispatching::{Dispatcher, UpdateFilterExt};
 use teloxide::dptree;
 use teloxide::payloads::AnswerCallbackQuerySetters;
 use teloxide::prelude::{CallbackQuery, ChatId, ChatMemberUpdated, Message, Requester, Update};
-use teloxide::types::ChatMemberStatus;
+use teloxide::types::{ChatKind, ChatMemberStatus};
 use teloxide::utils::command::BotCommands;
 use teloxide::{Bot, RequestError};
 
@@ -13,9 +13,7 @@ pub async fn message_handler(bot: Bot, msg: Message) -> Result<(), RequestError>
     if let Some(text) = msg.text() {
         let client = redis::Client::open("redis://127.0.0.1/").expect("failed to get redis client.");
         let mut conn = client.get_connection().expect("Failed to connect");
-        let msg_cloned = msg.clone();
-        let username = msg_cloned.from.unwrap().username.unwrap();
-        let key = format!("tg:users:{}", username);
+        let key = format!("tg:users:{}", msg.clone().from.unwrap().id.0);
 
         let user_rep: RedisResult<i64> = conn.hget(&key, "rep");
 
@@ -23,7 +21,10 @@ pub async fn message_handler(bot: Bot, msg: Message) -> Result<(), RequestError>
             Ok(_) => {}
             Err(_) => {
                 let _: () = conn
-                    .hincr(key, "rep",1)
+                    .hset(key.clone(), "rep", 0)
+                    .expect("Failed to update user's reputation");
+                let _: () = conn
+                    .hset(key.clone(), "username", msg.clone().from.unwrap().username.unwrap().to_string())
                     .expect("Failed to update user's reputation");
             }
         }
@@ -54,7 +55,7 @@ pub async fn callback_handler(bot: Bot, query: CallbackQuery) -> Result<(), Requ
                     .expect("Failed to add moderated chat to admin");
                 
                 let _: () = redis_conn
-                    .sadd(format!("chat:{}:admin_chat", selected_chat.clone()), admin_id.0)
+                    .hset(format!("tg:chats:{}", selected_chat.clone()), "admin_chat", admin_id.0)
                     .expect("Failed to add admin chat to selected chat");
 
                 bot.answer_callback_query(query.id)
@@ -72,7 +73,6 @@ pub async fn run_dispatcher(bot: Bot) {
         .branch(Update::filter_callback_query().endpoint(callback_handler))
         .branch(Update::filter_chat_member().endpoint(chat_member_handler))
         .branch(Update::filter_my_chat_member().endpoint(my_chat_member_handler));
-
     Dispatcher::builder(bot, handler).build().dispatch().await;
 }
 
@@ -105,7 +105,7 @@ pub async fn chat_member_handler(
             let _: () = conn.hset(key.clone(), "username", &username)
                 .expect("Failed to set username");
         }
-        ChatMemberStatus::Left | ChatMemberStatus::Banned => {
+        ChatMemberStatus::Left | ChatMemberStatus::Banned | ChatMemberStatus::Restricted => {
             if update.old_chat_member.status() == ChatMemberStatus::Administrator || update.old_chat_member.status() == ChatMemberStatus::Owner {
                 if !update.new_chat_member.user.is_bot {
                     let _: () = conn
@@ -127,20 +127,23 @@ pub async fn my_chat_member_handler(
     bot: Bot,
     update: ChatMemberUpdated,
 ) -> Result<(), RequestError> {
+    if matches!(update.chat.kind, ChatKind::Private { .. }) {
+        return Ok(());
+    }
     let client = redis::Client::open("redis://127.0.0.1/").expect("failed to get redis client.");
     let mut conn = client.get_connection().expect("Failed to connect");
     let chat_id = ChatId(update.chat.id.0);
     let admins_key = format!("{}:admins", update.chat.id.0);
     let chat_key = format!("tg:chats:{}", update.chat.id.0);
-    if update.new_chat_member.status() == ChatMemberStatus::Banned || update.new_chat_member.status() == ChatMemberStatus::Left{
+    if update.new_chat_member.status() == ChatMemberStatus::Banned || update.new_chat_member.status() == ChatMemberStatus::Left || update.new_chat_member.status() == ChatMemberStatus::Restricted {
         let admins: Vec<String> = conn
-        .smembers(admins_key.clone())
-        .expect("failed to get admins of the chat");
+            .smembers(admins_key.clone())
+            .expect("failed to get admins of the chat");
         for admin in admins {
             let admin_key = format!("{}:bot_chats", admin);
             let _: () = conn
-                            .srem(admin_key, update.chat.id.0)
-                            .expect("Failed to remove admin from bot_chats");
+                .srem(admin_key, update.chat.id.0)
+                .expect("Failed to remove admin from bot_chats");
         }
         let _: () = conn
             .del(chat_key)

@@ -38,6 +38,7 @@ pub async fn handle_admin_command(bot: Bot, msg: Message, cmd: AdminCommand) -> 
 
                 let mut rows: Vec<Vec<InlineKeyboardButton>> = Vec::new();
                 for chat in bot_chats {
+                    if chat == chat_id.0 { continue; }
                     let chat_name: String = redis_conn
                         .hget(format!("tg:chats:{}", chat), "name")
                         .expect("Failed to get chat name");
