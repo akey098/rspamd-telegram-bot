@@ -32,6 +32,9 @@ pub async fn handle_message(
             message.id, message.chat.id
         );
         bot.delete_message(message.chat.id, message.id).await?;
+        let _: () = redis_conn
+            .hincr("tg:stats", "deleted", 1)
+            .expect("Failed to update deleted count");
         if admin_chat.len() != 0 {
             bot.send_message(
                 ChatId(admin_chat[0]),
