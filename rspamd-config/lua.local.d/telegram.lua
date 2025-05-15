@@ -86,50 +86,6 @@ local redis_params
 local lua_redis = require "lua_redis"
 redis_params = lua_redis.parse_redis_server('replies')
 
---[[
-rspamd_config:add_on_load(function(cfg, ev_base, _)
-  rspamd_config:add_periodic(ev_base, 1, function()
-    local function redis_cb(err, keys)
-      if err then
-        return true -- keep periodic running
-      end
-
-      if not keys or type(keys) ~= "table" then
-        return true
-      end
-
-      for _, key in ipairs(keys) do
-        lua_redis.redis_make_request_taskless({
-          ev_base = ev_base,
-          config = cfg,
-          redis_params = redis_params,
-          key = nil,
-          is_write = true,
-          callback = nil,
-          command = "HINCRBY",
-          args = { key, "rep", -1 },
-        })
-      end
-
-      return true
-    end
-
-    -- Perform scan for keys matching tg:*:rep
-    lua_redis.redis_make_request_taskless({
-      ev_base = ev_base,
-      config = cfg,
-      redis_params = redis_params,
-      key = nil,
-      is_write = false,
-      callback = redis_cb,
-      command = "KEYS",
-      args = { "tg:users:*" },
-    })
-
-    return true -- keep periodic alive
-  end)
-end)
-]]--
 rspamd_config:set_metric_symbol('TG_FLOOD', 1.2, 'tg flood')
 rspamd_config:set_metric_symbol('TG_REPEAT', 2.0, 'tg repeat')
 rspamd_config:set_metric_symbol('TG_SUSPICIOUS', 10.0, 'tg suspicious')
