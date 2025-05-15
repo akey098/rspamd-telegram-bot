@@ -41,8 +41,9 @@ rspamd_config:register_symbol('TG_REPEAT', 1.0, function(task)
     local function last_msg_cb(err, data)
       if tostring(data) == msg then
         local stats_key = 'tg:users:' .. user_id
+        local overall_stats = 'tg:stats'
         rspamd_redis.make_request({task=task, host="127.0.0.1:6379",
-          cmd='HINCRBY', args={stats_key, 'spam_count', '1'}, callback=function() end})
+          cmd='HINCRBY', args={overall_stats, 'spam_count', '1'}, callback=function() end})
         rspamd_redis.make_request({task=task, host="127.0.0.1:6379",
           cmd='HINCRBY', args={stats_key, 'rep', '1'}, callback=function() end})
         task:insert_result('TG_REPEAT', 1.0)
@@ -63,35 +64,21 @@ rspamd_config:register_symbol('TG_SUSPICIOUS', 1.0, function(task)
       if err or not data then return end
       local total = tonumber(data) or 0
       if total > 10 then
+        local stats_key = 'tg:users:' .. user_id
+        local overall_stats = 'tg:stats'
+        rspamd_redis.make_request({task=task, host="127.0.0.1:6379",
+          cmd='HINCRBY', args={overall_stats, 'spam_count', '1'}, callback=function() end})
+        rspamd_redis.make_request({task=task, host="127.0.0.1:6379",
+          cmd='HINCRBY', args={stats_key, 'rep', '1'}, callback=function() end})
         task:insert_result('TG_SUSPICIOUS', 1.0)
       end
     end
     local stats_key = 'tg:users:' .. user_id
     rspamd_redis.make_request({task=task, host="127.0.0.1:6379",
-      cmd='HGET', args={stats_key, 'spam_count'}, callback=spam_cb})
+      cmd='HGET', args={stats_key, 'rep'}, callback=spam_cb})
   end)
 
 rspamd_config:set_metric_symbol('TG_SUSPICIOUS', 10.0, 'tg suspicious')
-
-rspamd_config.TG_STATS = {
-  callback = function(task)
-    local user = task:get_header('X-Telegram-User', true) or ""
-    local stats_key = 'tg:users:' .. user
-    local function stats_cb(task, err, data)
-      if err or not data then return end
-      local spam = data[1] or 0
-      local rep = data[2] or 0
-      local deleted = data[3] or 0
-      -- Format and send response via Telegram API...
-      -- (This part would involve the Rust bot, not Rspamd directly.)
-    end
-    rspamd_redis.make_request({task=task, host="127.0.0.1:6379",
-      cmd='HMGET', args={stats_key, 'spam_count', 'rep', 'deleted'}, callback=stats_cb})
-    return false
-  end,
-  score = 0.0,
-  description = 'Telegram stats query'
-}
 
 local rspamd_logger = require "rspamd_logger"
 local lua_redis = require "lua_redis"
