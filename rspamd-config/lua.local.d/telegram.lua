@@ -29,7 +29,7 @@ rspamd_config:register_symbol('TG_FLOOD', 1.0, function(task)
     
   end)
 
-rspamd_config:set_metric_symbol('TG_FLOOD', 1.2, 'tg flood')
+
 
 
 rspamd_config:register_symbol('TG_REPEAT', 1.0, function(task)
@@ -54,7 +54,7 @@ rspamd_config:register_symbol('TG_REPEAT', 1.0, function(task)
       cmd='GET', args={hash_key}, callback=last_msg_cb})
   end)
 
-rspamd_config:set_metric_symbol('TG_REPEAT', 2.0, 'tg repeat')
+
 
 rspamd_config:register_symbol('TG_SUSPICIOUS', 1.0, function(task)
     local user_id = tostring(task:get_header('X-Telegram-User', true) or "")
@@ -78,14 +78,8 @@ rspamd_config:register_symbol('TG_SUSPICIOUS', 1.0, function(task)
       cmd='HGET', args={stats_key, 'rep'}, callback=spam_cb})
   end)
 
-rspamd_config:set_metric_symbol('TG_SUSPICIOUS', 10.0, 'tg suspicious')
 
-local rspamd_logger = require "rspamd_logger"
-local lua_redis = require "lua_redis"
-
--- Make sure redis_params is parsed at the top of your module
-local redis_params = lua_redis.parse_redis_server('multimaps') -- or whatever upstream you use
-
+--[[
 rspamd_config:add_on_load(function(cfg, ev_base, worker)
   if worker:get_name() ~= 'normal' then
     return
@@ -135,3 +129,7 @@ rspamd_config:add_on_load(function(cfg, ev_base, worker)
     return true -- keep periodic alive
   end)
 end)
+]]--
+rspamd_config:set_metric_symbol('TG_FLOOD', 1.2, 'tg flood')
+rspamd_config:set_metric_symbol('TG_REPEAT', 2.0, 'tg repeat')
+rspamd_config:set_metric_symbol('TG_SUSPICIOUS', 10.0, 'tg suspicious')
