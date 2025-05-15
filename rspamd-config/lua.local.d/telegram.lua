@@ -3,15 +3,13 @@ local rspamd_redis = require "rspamd_redis"
 rspamd_config:register_symbol('TG_FLOOD', 1.0, function(task)
     local user_id = tostring(task:get_header('X-Telegram-User', true) or "")
     if user_id == "" then return false end
-    local redis_key = 'tg:user:' .. user_id .. ':flood'
+    local redis_key = 'tg:users:' .. user_id
     -- Define callback to be called when Redis returns
     local function flood_cb(err, data)
       if err or not data then return end
       local count = tonumber(data) or 0
-      if count == 1 then
-        rspamd_redis.make_request({task=task, host="127.0.0.1:6379",
-          cmd='EXPIRE', args={redis_key, '60'}, callback=function() end})
-      end
+      rspamd_redis.make_request({task=task, host="127.0.0.1:6379",
+        cmd='HEXPIRE', args={redis_key, '60', 'NX', 'FIELDS', 1, 'flood'}, callback=function() end})
       if count > 30 then
         local stats_key = 'tg:users:' .. user_id
         local overall_stats = 'tg:stats'
@@ -24,34 +22,40 @@ rspamd_config:register_symbol('TG_FLOOD', 1.0, function(task)
     end
     -- Increment flood counter and set a 60s expiry
     rspamd_redis.make_request({task=task, host="127.0.0.1:6379",
-      cmd='INCR', args={redis_key}, callback=flood_cb})
+      cmd='HINCRBY', args={redis_key, 'flood', 1}, callback=flood_cb})
     
     
   end)
-
-
-
 
 rspamd_config:register_symbol('TG_REPEAT', 1.0, function(task)
     local user_id = tostring(task:get_header('X-Telegram-User', true) or "")
     local msg = tostring(task:get_rawbody()) or ""
     if user_id == "" then return end
-    local hash_key = 'tg:user:' .. user_id .. ':lastmsg'
+    local hash_key = 'tg:users:' .. user_id
     -- Use HINCRBY on a hash field for the message text
     local function last_msg_cb(err, data)
-      if tostring(data) == msg then
-        local stats_key = 'tg:users:' .. user_id
-        local overall_stats = 'tg:stats'
-        rspamd_redis.make_request({task=task, host="127.0.0.1:6379",
-          cmd='HINCRBY', args={overall_stats, 'spam_count', '1'}, callback=function() end})
-        rspamd_redis.make_request({task=task, host="127.0.0.1:6379",
-          cmd='HINCRBY', args={stats_key, 'rep', '1'}, callback=function() end})
-        task:insert_result('TG_REPEAT', 1.0)
+      local function get_count_cb(err, data)
+        if err then return end
+        local count = tonumber(data) or 0
+        if count > 5 then
+          local stats_key = 'tg:users:' .. user_id
+          local overall_stats = 'tg:stats'
+          rspamd_redis.make_request({task=task, host="127.0.0.1:6379",
+            cmd='HINCRBY', args={overall_stats, 'spam_count', '1'}, callback=function() end})
+          rspamd_redis.make_request({task=task, host="127.0.0.1:6379",
+            cmd='HINCRBY', args={stats_key, 'rep', '1'}, callback=function() end})
+          task:insert_result('TG_REPEAT', 1.0)
+        end
       end
-      rspamd_redis.make_request({task = task, host="127.0.0.1:6379", cmd='SET', args={hash_key, msg}, callback=function() end})
+      if tostring(data) == msg then
+        rspamd_redis.make_request({task = task, host="127.0.0.1:6379", cmd='HINCRBY', args={hash_key, 'eq_msg_count', 1}, callback=get_count_cb})
+      else
+        rspamd_redis.make_request({task = task, host="127.0.0.1:6379", cmd='HSET', args={hash_key, 'eq_msg_count', 0}, callback=function() end})
+      end
+      rspamd_redis.make_request({task = task, host="127.0.0.1:6379", cmd='HSET', args={hash_key, 'last_msg', msg}, callback=function() end})
     end
     rspamd_redis.make_request({task=task, host="127.0.0.1:6379",
-      cmd='GET', args={hash_key}, callback=last_msg_cb})
+      cmd='HGET', args={hash_key, 'last_msg'}, callback=last_msg_cb})
   end)
 
 
