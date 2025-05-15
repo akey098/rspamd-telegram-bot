@@ -8,8 +8,8 @@ rspamd_config:register_symbol('TG_FLOOD', 1.0, function(task)
     local function flood_cb(err, data)
       if err or not data then return end
       local count = tonumber(data) or 0
-      rspamd_redis.make_request({task=task, host="127.0.0.1:6379",
-        cmd='HEXPIRE', args={redis_key, '60', 'NX', 'FIELDS', 1, 'flood'}, callback=function() end})
+      --rspamd_redis.make_request({task=task, host="127.0.0.1:6379",
+      --  cmd='HEXPIRE', args={redis_key, '60', 'NX', 'FIELDS', 1, 'flood'}, callback=function() end})
       if count > 30 then
         local stats_key = 'tg:users:' .. user_id
         local overall_stats = 'tg:stats'
@@ -82,37 +82,32 @@ rspamd_config:register_symbol('TG_SUSPICIOUS', 1.0, function(task)
       cmd='HGET', args={stats_key, 'rep'}, callback=spam_cb})
   end)
 
+local redis_params
+local lua_redis = require "lua_redis"
+redis_params = lua_redis.parse_redis_server('replies')
 
 --[[
-rspamd_config:add_on_load(function(cfg, ev_base, worker)
-  if worker:get_name() ~= 'normal' then
-    return
-  end
-
-  rspamd_logger.infox(rspamd_config, "Setting up periodic decrement for user reputations")
-
-  rspamd_config:add_periodic(ev_base, 3600.0, function()
+rspamd_config:add_on_load(function(cfg, ev_base, _)
+  rspamd_config:add_periodic(ev_base, 1, function()
     local function redis_cb(err, keys)
       if err then
-        rspamd_logger.errx("Redis KEYS error: %1", err)
         return true -- keep periodic running
       end
 
       if not keys or type(keys) ~= "table" then
-        rspamd_logger.infox("No reputation keys found")
         return true
       end
 
       for _, key in ipairs(keys) do
-        rspamd_logger.debugm("telegram", rspamd_config, "Decrementing reputation key: %s", key)
-        lua_redis.redis_make_request({
-          config = rspamd_config,
+        lua_redis.redis_make_request_taskless({
           ev_base = ev_base,
-          host = redis_params,
-          cmd = "DECRBY",
-          args = { key, "1" },
-          callback = function() end, -- silent
-          is_write = true
+          config = cfg,
+          redis_params = redis_params,
+          key = nil,
+          is_write = true,
+          callback = nil,
+          command = "HINCRBY",
+          args = { key, "rep", -1 },
         })
       end
 
@@ -120,14 +115,15 @@ rspamd_config:add_on_load(function(cfg, ev_base, worker)
     end
 
     -- Perform scan for keys matching tg:*:rep
-    lua_redis.redis_make_request({
-      config = rspamd_config,
+    lua_redis.redis_make_request_taskless({
       ev_base = ev_base,
-      host = redis_params,
-      cmd = "KEYS",
-      args = { "tg:*:rep" },
+      config = cfg,
+      redis_params = redis_params,
+      key = nil,
+      is_write = false,
       callback = redis_cb,
-      is_write = false
+      command = "KEYS",
+      args = { "tg:users:*" },
     })
 
     return true -- keep periodic alive
