@@ -13,3 +13,8 @@ redis = "*"
 anyhow = "1.0.98"
 chrono = "0.4.40"
 get_if_addrs = "0.5.3"
+
+[dev-dependencies]
+teloxide = { version = "0.14.1", features = ["macros"] }
+teloxide_tests = "0.3.0"
+redis = { version = "*", features = ["tokio-comp"] }

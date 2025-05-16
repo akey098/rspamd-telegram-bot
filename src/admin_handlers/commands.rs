@@ -2,7 +2,7 @@ use teloxide::{utils::command::BotCommands};
 
 #[derive(BotCommands, Clone)]
 #[command(rename_rule = "lowercase", description = "Admin commands:")]
-pub(crate) enum AdminCommand {
+pub enum AdminCommand {
     #[command(description = "show help.")]
     Help,
     #[command(description = "enable a feature.")]

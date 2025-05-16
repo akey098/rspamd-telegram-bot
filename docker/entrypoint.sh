@@ -19,5 +19,7 @@ if ! redis-cli ping | grep -q PONG; then
     exit 1
 fi
 
+exec cargo test
+
 exec /usr/local/bin/rspamd-telegram-bot
 echo "Telegram bot started"

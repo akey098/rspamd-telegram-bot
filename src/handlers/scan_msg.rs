@@ -1,7 +1,7 @@
 use chrono::Utc;
 use rspamd_client::{config::Config, error::RspamdError, protocol::RspamdScanReply, scan_async};
 use teloxide::prelude::*;
-use crate::utils;
+use get_if_addrs::{get_if_addrs, IfAddr};
 
 pub async fn scan_msg(msg: Message, text: String) -> Result<RspamdScanReply, RspamdError> {
     let user = msg.from.unwrap();
@@ -11,7 +11,7 @@ pub async fn scan_msg(msg: Message, text: String) -> Result<RspamdScanReply, Rsp
     let chat_name = msg.chat.title().unwrap().to_string();
     let date = Utc::now().to_rfc2822();
     let text = text;
-    let ip = utils::detect_local_ipv4().unwrap().to_string();
+    let ip = detect_local_ipv4().unwrap().to_string();
     let email = format!(
         "Received: from {ip} ({ip}) by localhost.localdomain with HTTP; {date}\r\n\
         Date: {date}\r\n\
@@ -37,4 +37,18 @@ pub async fn scan_msg(msg: Message, text: String) -> Result<RspamdScanReply, Rsp
         .base_url("http://localhost:11333".to_string())
         .build();
     scan_async(&options, email).await
+}
+
+pub fn detect_local_ipv4() -> Option<String> {
+    if let Ok(ifaces) = get_if_addrs() {
+        for iface in ifaces {
+            if let IfAddr::V4(v4addr) = iface.addr {
+                let ip = v4addr.ip;
+                if !ip.is_loopback() {
+                    return Some(format!("{}/32", ip));
+                }
+            }
+        }
+    }
+    None
 }
