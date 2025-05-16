@@ -2,7 +2,7 @@
 set -e
 
 service redis-server start
-service rspamd start
+
 
 # Ждать, пока Redis не станет доступен
 for i in {1..20}; do
@@ -19,7 +19,13 @@ if ! redis-cli ping | grep -q PONG; then
     exit 1
 fi
 
-exec cargo test
+#! exec cargo test
+
+ls /etc/rspamd/lua.local.d/
+
+service rspamd restart
+
+rspamadm configtest
 
 exec /usr/local/bin/rspamd-telegram-bot
 echo "Telegram bot started"

@@ -8,7 +8,6 @@ pub async fn scan_msg(msg: Message, text: String) -> Result<RspamdScanReply, Rsp
     let user_id = user.id.to_string();
     let user_name = user.username.expect("REASON").to_string();
     let chat_id = msg.chat.id;
-    let chat_name = msg.chat.title().unwrap().to_string();
     let date = Utc::now().to_rfc2822();
     let text = text;
     let ip = detect_local_ipv4().unwrap().to_string();
@@ -16,7 +15,7 @@ pub async fn scan_msg(msg: Message, text: String) -> Result<RspamdScanReply, Rsp
         "Received: from {ip} ({ip}) by localhost.localdomain with HTTP; {date}\r\n\
         Date: {date}\r\n\
         From: telegram{user_name}@example.com\r\n\
-        To: telegram{chat_name}@example.com\r\n\
+        To: telegram{chat_id}@example.com\r\n\
         Subject: Telegram message\r\n\
         Message-ID: <{user_id}.{chat_id}@example.com>\r\n\
         X-Telegram-User: {user_id}\r\n\
@@ -28,7 +27,6 @@ pub async fn scan_msg(msg: Message, text: String) -> Result<RspamdScanReply, Rsp
         date = date,
         ip = ip,
         user_name = user_name,
-        chat_name = chat_name,
         user_id = user_id,
         chat_id = chat_id,
         text = text.replace("\n", "\r\n")
