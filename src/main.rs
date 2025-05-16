@@ -46,11 +46,12 @@ async fn do_periodic() -> Result<(), Box<dyn Error + Send + Sync>> {
 
     for key in keys {
         let rep: i64 = redis_conn
-            .hget(&key, "rep")
+            .hget(key.clone(), "rep")
             .expect("Failed to get user's reputation");
+
         if rep > 0 {
             let _: () = redis_conn
-                .hincr(&key, "rep", -1)
+                .hincr(key.clone(), "rep", -1)
                 .expect("Failed to decrease user's reputation");
         }
     }

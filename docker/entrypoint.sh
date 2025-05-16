@@ -19,8 +19,6 @@ if ! redis-cli ping | grep -q PONG; then
     exit 1
 fi
 
-#! exec cargo test
-
 ls /etc/rspamd/lua.local.d/
 
 service rspamd restart

@@ -82,10 +82,6 @@ rspamd_config:register_symbol('TG_SUSPICIOUS', 1.0, function(task)
       cmd='HGET', args={stats_key, 'rep'}, callback=spam_cb})
   end)
 
-local redis_params
-local lua_redis = require "lua_redis"
-redis_params = lua_redis.parse_redis_server('replies')
-
 rspamd_config:set_metric_symbol('TG_FLOOD', 1.2, 'tg flood')
 rspamd_config:set_metric_symbol('TG_REPEAT', 2.0, 'tg repeat')
 rspamd_config:set_metric_symbol('TG_SUSPICIOUS', 10.0, 'tg suspicious')
