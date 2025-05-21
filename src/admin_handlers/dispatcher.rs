@@ -5,7 +5,7 @@ use teloxide::dispatching::{Dispatcher, UpdateFilterExt};
 use teloxide::dptree;
 use teloxide::payloads::AnswerCallbackQuerySetters;
 use teloxide::prelude::{CallbackQuery, ChatId, ChatMemberUpdated, Message, Requester, Update};
-use teloxide::types::{ChatKind, ChatMemberStatus};
+use teloxide::types::{BotCommand, ChatKind, ChatMemberStatus};
 use teloxide::utils::command::BotCommands;
 use teloxide::{Bot, RequestError};
 
@@ -68,6 +68,8 @@ pub async fn callback_handler(bot: Bot, query: CallbackQuery) -> Result<(), Requ
 }
 
 pub async fn run_dispatcher(bot: Bot) {
+    let commands:Vec<BotCommand> = AdminCommand::bot_commands();
+    let _ = bot.set_my_commands(commands).await;
     let handler = dptree::entry()
         .branch(Update::filter_message().endpoint(message_handler))
         .branch(Update::filter_callback_query().endpoint(callback_handler))
@@ -117,7 +119,6 @@ pub async fn chat_member_handler(
                 .del(key.clone())
                 .expect("Failed to remove user's reputation");
         }
-        _ => {}
     }
 
     Ok(())

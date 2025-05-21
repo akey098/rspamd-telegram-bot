@@ -2,6 +2,8 @@ use crate::admin_handlers::AdminCommand;
 use redis::{Commands, RedisResult};
 use teloxide::types::{Chat, ChatMemberStatus};
 use teloxide::{prelude::*, types::InlineKeyboardButton, types::InlineKeyboardMarkup};
+use tokio::fs::OpenOptions;
+use tokio::io::AsyncWriteExt;
 
 async fn is_user_admin(bot: &Bot, chat: Chat, user_id: UserId) -> anyhow::Result<bool> {
     if !chat.is_private() {
@@ -95,8 +97,46 @@ pub async fn handle_admin_command(bot: Bot, msg: Message, cmd: AdminCommand) -> 
                     .await?;
             }
             AdminCommand::AddRegex { pattern } => {
-                bot.send_message(chat_id, format!("Added regex pattern: {}", pattern))
-                    .await?;
+                let parts: Vec<&str> = pattern.split('|').map(str::trim).collect();
+                if parts.len() != 3 {
+                    bot.send_message(chat_id, "Usage: /addregex SYMBOL|regex_pattern|SCORE").await?;
+                    return Ok(());
+                }
+                let (symbol, regex_pattern, score) = (parts[0], parts[1], parts[2]);
+                
+                let lua_rule = format!(
+                    "config['regexp']['{}'] = {{
+                        re = '{}',
+                        score = {},
+                        condition = function(task)
+                            if task:get_header('Subject') then
+                                return true
+                            end
+                            return false
+                        end,
+                    }}\n",
+                    symbol, regex_pattern, score
+                );
+                
+                let path = format!("/var/lib/rspamd-bot/telegram_regex_{}.lua", symbol);
+                
+                let mut file = match OpenOptions::new().create(true).append(true).open(&path).await {
+                    Ok(f) => f,
+                    Err(e) => {
+                        bot.send_message(chat_id, format!("Failed to open file: {e}")).await?;
+                        return Ok(());
+                    }
+                };
+                
+                if let Err(e) = file.write_all(lua_rule.as_bytes()).await {
+                    bot.send_message(chat_id, format!("Failed to write: {e}")).await?;
+                    return Ok(());
+                }
+                
+                bot.send_message(chat_id, format!(
+                    "Added regex pattern: '{}' with symbol '{}' and score {}.\nPlease reload Rspamd to apply the rule.",
+                    regex_pattern, symbol, score
+                )).await?;
             }
         }
     } else {

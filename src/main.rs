@@ -1,7 +1,4 @@
 use std::time::Duration;
-use std::{fs, io};
-use std::path::Path;
-use std::process::Command;
 use std::error::Error; 
 use redis::Commands;
 use teloxide::prelude::*;
