@@ -4,7 +4,7 @@
 # Rspamd is configured with the repository's custom Lua rules (as in the Docker image).
 on:
   push:
-    branches: [ main ]    # Trigger only on pushes to the main branch
+    branches: [ master ]    # Trigger only on pushes to the main branch
 
 jobs:
   integration-tests:
