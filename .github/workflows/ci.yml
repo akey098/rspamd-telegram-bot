@@ -1,0 +1,59 @@
+# GitHub Actions workflow to run Rust integration tests on the main branch.
+# Uses latest stable Rust, starts Redis and Rspamd (with custom config), 
+# then builds the project and runs integration tests in `tests/`.
+# Rspamd is configured with the repository's custom Lua rules (as in the Docker image).
+on:
+  push:
+    branches: [ main ]    # Trigger only on pushes to the main branch
+
+jobs:
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest  # Use latest Ubuntu runner
+    
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v3
+
+      - name: Set up Rust (stable)
+        uses: actions/setup-rust@v1
+        with:
+          rust-version: stable    # Install the latest stable Rust toolchain
+
+      # Install Redis (and prerequisites):contentReference[oaicite:0]{index=0}, then add Rspamd apt repo and install Rspamd:contentReference[oaicite:1]{index=1}
+      - name: Install Redis and Rspamd
+        run: |
+          sudo apt-get update && sudo apt-get install -y lsb-release wget gpg ca-certificates redis-server
+          # Add official Rspamd APT repository and GPG key (as in project Dockerfile):contentReference[oaicite:2]{index=2}
+          CODENAME=$(lsb_release -c -s)
+          sudo mkdir -p /etc/apt/keyrings
+          wget -O- https://rspamd.com/apt-stable/gpg.key | gpg --dearmor | sudo tee /etc/apt/keyrings/rspamd.gpg > /dev/null
+          echo "deb [signed-by=/etc/apt/keyrings/rspamd.gpg] http://rspamd.com/apt-stable/ $CODENAME main" | sudo tee /etc/apt/sources.list.d/rspamd.list
+          sudo apt-get update && sudo apt-get install -y rspamd
+
+      - name: Configure Rspamd
+        run: |
+          # Copy the repository's Rspamd config (Lua rules) into place and verify config:contentReference[oaicite:3]{index=3}
+          sudo mkdir -p /etc/rspamd/lua.local.d
+          sudo cp -R rspamd-config/lua.local.d/. /etc/rspamd/lua.local.d/
+          sudo rspamadm configtest  # Verify Rspamd configuration is valid
+
+      - name: Start services
+        run: |
+          sudo service redis-server start
+          sudo service rspamd restart
+          # Wait for Redis and Rspamd to be fully up (ping Redis and run Rspamd config test):contentReference[oaicite:4]{index=4}:contentReference[oaicite:5]{index=5}
+          for i in {1..10}; do
+            if redis-cli ping | grep -q PONG && rspamadm configtest > /dev/null; then
+              echo "Redis and Rspamd are up"
+              break
+            fi
+            echo "Waiting for services... ($i)"
+            sleep 1
+          done
+
+      - name: Build project
+        run: cargo build --verbose    # Build the Rust project (compilation step)
+
+      - name: Run integration tests
+        run: cargo test -- --test-threads=1   # Run tests (single-threaded to avoid race conditions with shared services)
