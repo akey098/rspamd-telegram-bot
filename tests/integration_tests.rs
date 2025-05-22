@@ -7,18 +7,12 @@
 //! Redis **must** be running on 127.0.0.1:6379
 //! Rspamd **must** be running on 127.0.0.1:11333 with the bot’s Lua rules.
 
-use std::thread::sleep;
 use std::time::Duration;
 
 use chrono::Utc;
 use redis::Commands;
 use rspamd_telegram_bot::handlers::scan_msg;
 use teloxide::types::{Chat, ChatId, ChatKind, ChatPrivate, MediaKind, MediaText, Message, MessageCommon, MessageId, MessageKind, User, UserId};
-use serde_json::json;
-
-// ────────────────────────────────────────────────────────────────────────────
-// Helpers
-// ────────────────────────────────────────────────────────────────────────────
 
 /// Flush Redis before each test
 fn flush_redis() {
@@ -102,30 +96,31 @@ fn make_message(chat_id: i64, user_id: u64, username: &str, text: &str, msg_id: 
 #[tokio::test]
 async fn tg_flood_sets_symbol_and_increments_stats() {
     flush_redis();
+    tokio::time::sleep(Duration::from_millis(50)).await;
 
     let chat_id = 1001;
     let user_id = 42;
-
+    let key = format!("tg:users:{}", user_id);
+    
     let client = redis::Client::open("redis://127.0.0.1/")
         .expect("Failed to connect to Redis");
     let mut conn = client
         .get_connection()
         .expect("Failed to connect to Redis");
     let _: () = conn
-        .hset("tg:users:42", "rep", 0)
+        .hset(key.clone(), "rep", 0)
         .expect("Failed to set user reputation");
 
     // 30 benign messages
     for i in 1..=30 {
-        let result = scan_msg(
-            make_message(chat_id, user_id,"test", &format!("msg{i}"), i),
+        scan_msg(
+            make_message(chat_id, user_id, "test", &format!("msg{i}"), i),
             format!("msg{i}"),
         )
-        .await
-        .ok()
-        .unwrap();
-        println!("Score: {}", result.score);
-        sleep(Duration::from_millis(50));
+            .await
+            .ok()
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
     }
 
     // 31-st message – should trigger TG_FLOOD
@@ -136,12 +131,17 @@ async fn tg_flood_sets_symbol_and_increments_stats() {
     .await
     .ok()
     .unwrap();
-    sleep(Duration::from_millis(50));
+    tokio::time::sleep(Duration::from_millis(50)).await;
 
     assert!(
         reply.symbols.contains_key("TG_FLOOD"),
         "Expected TG_FLOOD after 31 rapid messages"
     );
+    
+    let rep: i64 = conn
+        .hget(key.clone(), "rep")
+        .expect("Failed to get rep");
+    assert_eq!(rep, 1);
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -150,9 +150,11 @@ async fn tg_flood_sets_symbol_and_increments_stats() {
 #[tokio::test]
 async fn tg_repeat_sets_symbol_and_increments_rep() {
     flush_redis();
+    tokio::time::sleep(Duration::from_millis(50)).await;
 
     let chat_id = 2002;
     let user_id = 99;
+    let key = format!("tg:users:{}", user_id);
 
     let client = redis::Client::open("redis://127.0.0.1/")
         .expect("Failed to connect to Redis");
@@ -160,7 +162,7 @@ async fn tg_repeat_sets_symbol_and_increments_rep() {
         .get_connection()
         .expect("Failed to connect to Redis");
     let _: () = conn
-        .hset("tg:users:99", "rep", 0)
+        .hset(key.clone(), "rep", 0)
         .expect("Failed to set user reputation");
 
     for i in 1..=6 {
@@ -171,7 +173,7 @@ async fn tg_repeat_sets_symbol_and_increments_rep() {
         .await
         .ok()
         .unwrap();
-        sleep(Duration::from_millis(50));
+        tokio::time::sleep(Duration::from_millis(50)).await;
     }
 
     // Last call returns the sixth scan result
@@ -182,12 +184,16 @@ async fn tg_repeat_sets_symbol_and_increments_rep() {
     .await
     .ok()
     .unwrap();
-    sleep(Duration::from_millis(50));
+    tokio::time::sleep(Duration::from_millis(50)).await;
 
     assert!(
         reply.symbols.contains_key("TG_REPEAT"),
         "Expected TG_REPEAT symbol"
     );
+    let rep: i64 = conn
+        .hget(key.clone(), "rep")
+        .expect("Failed to get rep");
+    assert_eq!(rep, 1);
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -196,9 +202,11 @@ async fn tg_repeat_sets_symbol_and_increments_rep() {
 #[tokio::test]
 async fn tg_suspicious_sets_symbol() {
     flush_redis();
+    tokio::time::sleep(Duration::from_millis(50)).await;
 
     let chat_id = 3003;
     let user_id = 123;
+    let key = format!("tg:users:{}", user_id);
 
     // Manually bump reputation above the threshold
     let client = redis::Client::open("redis://127.0.0.1/")
@@ -207,7 +215,7 @@ async fn tg_suspicious_sets_symbol() {
         .get_connection()
         .expect("Failed to connect to Redis");
     let _: () = conn
-        .hset("tg:users:123", "rep", 11)
+        .hset(key.clone(), "rep", 11)
         .expect("Failed to set user reputation");
 
     let reply = scan_msg(
@@ -217,15 +225,15 @@ async fn tg_suspicious_sets_symbol() {
     .await
     .ok()
     .unwrap();
-    sleep(Duration::from_millis(50));
+    tokio::time::sleep(Duration::from_millis(50)).await;
     let rep: i64 = conn
-        .hget("tg:users:123", "rep")
+        .hget(key.clone(), "rep")
         .expect("Failed to get user reputation");
-    println!("REPUTATION: {}", rep);
     assert!(
         reply.symbols.contains_key("TG_SUSPICIOUS"),
         "Expected TG_SUSPICIOUS for high-rep user"
     );
+    assert_eq!(rep, 12);
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -234,9 +242,10 @@ async fn tg_suspicious_sets_symbol() {
 // ────────────────────────────────────────────────────────────────────────────
 #[ignore]
 #[tokio::test]
-async fn make_admin_flow() {
-    unimplemented!("exposed handler for /make_admin not yet available");
+async fn make_admin_integration_flow() {
+    unimplemented!("exposed handler for /makeadmin not yet available");
 }
+
 
 #[ignore]
 #[tokio::test]

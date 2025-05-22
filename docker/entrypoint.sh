@@ -25,5 +25,7 @@ service rspamd restart
 
 rspamadm configtest
 
+cargo test
+
 exec /usr/local/bin/rspamd-telegram-bot
 echo "Telegram bot started"
