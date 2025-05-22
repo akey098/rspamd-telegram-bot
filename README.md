@@ -1,9 +1,21 @@
-Thanks! I’ll prepare a comprehensive `README.md` for the 'Full Telegram Support for Spam Filtering' project. It will include installation instructions, usage examples, and reference that the project is licensed under Apache. I’ll also highlight that it is currently in the implementation phase. I’ll share it with you shortly.
-
-
 # Full Telegram Support for Spam Filtering
 
 **Full Telegram Support for Spam Filtering** is an open-source Telegram bot that integrates with the Rspamd spam filtering engine to provide real-time spam detection and automated moderation in Telegram chats. The bot is written in **Rust** for high-performance Telegram API integration, and it uses **Lua** scripting (within Rspamd) to define flexible spam detection rules. This project enables community moderators to combat spam in group chats more effectively by combining Rspamd’s powerful filtering capabilities with a user-friendly Telegram-based interface.
+
+## Table of Contents
+
+- [Full Telegram Support for Spam Filtering](#full-telegram-support-for-spam-filtering)
+    - [Features](#features)
+    - [Technology Stack](#technology-stack)
+    - [Installation](#installation)
+        - [Prerequisites](#prerequisites)
+        - [Setup (from Source)](#setup-from-source)
+        - [Using Docker (All-in-One Container)](#using-docker-all-in-one-container)
+    - [Usage](#usage)
+    - [Project Status](#project-status)
+    - [License](#license)
+    - [Contact and Credits](#contact-and-credits)
+
 
 ## Features
 
@@ -102,7 +114,7 @@ For convenience, the project provides a Docker setup that bundles everything (th
 1. **Build the Docker image** (from the project root directory, where the `Dockerfile` is located):
 
    ```bash
-   docker build -t rspamd-telegram-bot .
+   docker build -f docker/Dockerfile -t rspamd-telegram-bot 
    ```
 
    This Docker build will compile the Rust bot and set up a runtime environment with Rspamd and Redis on a slim Debian base.
@@ -135,16 +147,16 @@ Once the bot is running and added to a group chat, it will automatically begin m
 
 * **Admin Commands and Control:** The bot offers a set of **commands** for administrators to configure and query the system. These commands are issued as standard Telegram messages (usually in the bot’s **private chat** or in a group where the bot is present). For security, most admin commands require the user to be a chat admin or the bot’s owner. Here are the key commands:
 
-    * **`/make_admin`** – Run this command in a private chat with the bot (or in a group that you want to use as an admin hub). It registers the current chat as an **admin control chat** for the bot. This is typically done in a one-on-one chat between you (the admin) and the bot, turning that chat into your control panel. After you send `/make_admin`, the bot will respond with **“Admin chat registered! Please select chats to moderate:”** and present an inline keyboard listing the titles of Telegram groups where the bot is a member. Simply tap the button for each group you want this admin chat to manage. When you click a group name, the bot will link that group to your admin chat and confirm with **“Chat assigned for moderation!”**. From then on, any spam alerts or warnings from that group will be relayed to your admin chat (instead of cluttering the group). You can use one admin chat to oversee multiple groups.
+    * **`/makeadmin`** – Run this command in a private chat with the bot (or in a group that you want to use as an admin hub). It registers the current chat as an **admin control chat** for the bot. This is typically done in a one-on-one chat between you (the admin) and the bot, turning that chat into your control panel. After you send `/makeadmin`, the bot will respond with **“Admin chat registered! Please select chats to moderate:”** and present an inline keyboard listing the titles of Telegram groups where the bot is a member. Simply tap the button for each group you want this admin chat to manage. When you click a group name, the bot will link that group to your admin chat and confirm with **“Chat assigned for moderation!”**. From then on, any spam alerts or warnings from that group will be relayed to your admin chat (instead of cluttering the group). You can use one admin chat to oversee multiple groups.
     * **`/help`** – Displays a list of available commands and a brief description of each. For example, it will list commands like `/make_admin`, `/stats`, etc., along with what they do. This is useful to see all bot capabilities at a glance (especially as new features might be added).
     * **`/stats`** – Shows overall statistics collected by the bot. This might include information such as the number of messages scanned, how many were flagged or deleted as spam, how many warnings issued, etc. (This feature is under active development – in future updates it will provide detailed metrics to help you evaluate how effective the filter is and see spam trends in your chats.)
     * **`/reputation <user_id>`** – Query the reputation score of a particular user. You can use the numeric Telegram user ID (as the bot sees internally) or possibly the @username (depending on implementation, user\_id is safest). The bot will reply with the user’s current reputation points (for example, *“Reputation for user 123456: 5”*). A higher number means the user has sent spam frequently. This command is handy if you want to manually check on a specific member’s status. *(In the future, this might be extended to allow using a reply or mention instead of numeric ID for convenience.)*
     * **`/recent`** – Retrieves a list of recent messages that were flagged as spam by the bot. This allows admins to review what content was caught and removed. For instance, the bot might show the last few spam messages (perhaps with snippets or IDs) so you can verify there were no mistakes or get context on spam attacks. This feature is planned to include message details and timestamps for transparency.
     * **`/addregex <pattern>`** – Adds a custom regex pattern to the spam detection rules on-the-fly. This command is intended for advanced use: if you notice a particular spam phrase or URL frequently appearing, an admin could add a regex via this command to immediately start flagging messages that match it. The bot would incorporate this pattern into its Lua rule set (or Redis store) so that future messages containing the pattern are caught. *(This feature is in development; ultimately it will enable quick custom rule updates without restarting the bot.)*
 
-  **Using the Commands:** To use these commands, you can either message the bot directly (in a private chat, which is recommended for admin commands like `/make_admin` to avoid revealing admin actions in a public group), or if in a group, you might need to prefix the command with the bot’s username (e.g., `/stats@YourBotUsername`) depending on whether the group allows bot commands without mention. Remember that for the bot to recognize you as an admin in a group context, you must be an administrator of that group. The bot checks the sender’s status for certain commands to ensure only authorized people can use them. In a private one-on-one chat with the bot, all commands are accepted (since by default, if you’re talking directly, you’re assumed to be an allowed user, especially after using `/make_admin`).
+  **Using the Commands:** To use these commands, you can either message the bot directly (in a private chat, which is recommended for admin commands like `/makeadmin` to avoid revealing admin actions in a public group), or if in a group, you might need to prefix the command with the bot’s username (e.g., `/stats@YourBotUsername`) depending on whether the group allows bot commands without mention. Remember that for the bot to recognize you as an admin in a group context, you must be an administrator of that group. The bot checks the sender’s status for certain commands to ensure only authorized people can use them. In a private one-on-one chat with the bot, all commands are accepted (since by default, if you’re talking directly, you’re assumed to be an allowed user, especially after using `/make_admin`).
 
-* **Moderator Notifications:** Once you have an admin control chat set (via `/make_admin`), the bot will use that chat to send you moderation events. For example, if spam is detected in one of your monitored groups and a message gets deleted, you will see a notification in the admin chat like:
+* **Moderator Notifications:** Once you have an admin control chat set (via `/makeadmin`), the bot will use that chat to send you moderation events. For example, if spam is detected in one of your monitored groups and a message gets deleted, you will see a notification in the admin chat like:
   *“Deleting message 87 from user 99887766 in chat **SalesGroup** for spam.”*
   This message tells you which group had spam, which user (ID) was responsible, and which message was removed. If an admin chat is **not** configured, the bot will post these notifications in the same group where the spam occurred (visible to everyone). Configuring an admin chat is recommended to keep the group chat clean and only inform the moderators.
 
@@ -161,7 +173,7 @@ With the bot properly configured, it runs autonomously – you can let it work i
 
 Being a GSoC project, “Full Telegram Support for Spam Filtering” is developed in the open with mentorship and community feedback. **Contributions and feedback are welcome** – if you encounter issues or have ideas for enhancements, you can open issues or pull requests on the GitHub repository. The goal is to polish this bot to a production-ready state by the end of the GSoC period, and potentially merge it or integrate it with the wider Rspamd ecosystem. Keep an eye on the repository for updates, and feel free to try it out and get involved!
 
-*(This project was initiated in 2023 as part of GSoC, under the Rspamd organization, and continues to be improved beyond the summer program.)*
+*(This project was initiated in 2025 as part of GSoC, under the Rspamd organization, and continues to be improved beyond the summer program.)*
 
 ## License
 
@@ -169,7 +181,7 @@ This project is licensed under the **Apache License 2.0**. You are free to use, 
 
 ## Contact and Credits
 
-**Author:** Alpatskaia Elizaveta – *Project developer (GSoC Student)*.
+**Author:** Alpatskaia Elizaveta – *Project developer (GSoC Contributor)*.
 
 * GitHub: [@akey098](https://github.com/akey098)
 
