@@ -1,4 +1,5 @@
 #!/bin/bash
+
 set -e
 
 service redis-server start
@@ -24,8 +25,6 @@ ls /etc/rspamd/lua.local.d/
 service rspamd restart
 
 rspamadm configtest
-
-cargo test
 
 exec /usr/local/bin/rspamd-telegram-bot
 echo "Telegram bot started"

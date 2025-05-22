@@ -32,11 +32,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends file && file /u
 # └─────────────────────────────────────────────────────┘
 FROM debian:bookworm-slim
 
-# Установка зависимостей и инструментов
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-      lsb-release wget gpg ca-certificates sudo redis-server && \
-    rm -rf /var/lib/apt/lists/*
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      psmisc lsb-release wget gpg ca-certificates sudo redis-server \
+ && rm -rf /var/lib/apt/lists/*
 
 # Добавление репозитория Rspamd
 RUN CODENAME=$(lsb_release -c -s) && \
@@ -64,6 +63,10 @@ RUN chmod +x /entrypoint.sh
 
 EXPOSE 11333 6379
 
-# Запуск через entrypoint-скрипт
-ENTRYPOINT ["/entrypoint.sh"]
+ENTRYPOINT ["sh","-c", "\
+    echo \"Cleaning ports…\"; \
+    fuser -k 11333/tcp 2>/dev/null || true; \
+    fuser -k 6379/tcp 2>/dev/null || true; \
+    exec /entrypoint.sh\
+"]
 
