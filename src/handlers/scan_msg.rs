@@ -19,6 +19,7 @@ pub async fn scan_msg(msg: Message, text: String) -> Result<RspamdScanReply, Rsp
         Subject: Telegram message\r\n\
         Message-ID: <{user_id}.{chat_id}@example.com>\r\n\
         X-Telegram-User: {user_id}\r\n\
+        X-Telegram-Chat: {chat_id}\r\n\
         MIME-Version: 1.0\r\n\
         Content-Type: text/plain; charset=UTF-8\r\n\
         Content-Transfer-Encoding: 8bit\r\n\
