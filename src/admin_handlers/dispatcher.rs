@@ -74,12 +74,12 @@ pub async fn stats_handler(bot: Bot, query: CallbackQuery) -> Result<(), Request
         if let Some(admin_chat) = query.message {
             let admin_id = admin_chat.chat().id;
             let selected_chat: i64 = callback_data["makeadmin:".len()..].parse().unwrap();
+            let redis_client =
+                redis::Client::open("redis://127.0.0.1/").expect("Failed to connect to Redis");
+            let mut redis_conn = redis_client
+                .get_connection()
+                .expect("Failed to get Redis connection");
             if selected_chat != 0 {
-                let redis_client =
-                    redis::Client::open("redis://127.0.0.1/").expect("Failed to connect to Redis");
-                let mut redis_conn = redis_client
-                    .get_connection()
-                    .expect("Failed to get Redis connection");
                 let stats: HashMap<String, String> = redis_conn
                     .hgetall(format!("tg:chats:{}", selected_chat))
                     .expect("Failed to get chat stats");
@@ -91,6 +91,30 @@ pub async fn stats_handler(bot: Bot, query: CallbackQuery) -> Result<(), Request
                     writeln!(&mut response, "{}: {}", field, value).unwrap();
                 }
                 bot.send_message(admin_id, response).await?;
+            } else {
+                let chats: Vec<i64> = redis_conn
+                    .smembers(format!("admin:{}:moderated_chats", admin_id))
+                    .expect("Failed to get moderated chats");
+                let mut total_stats: HashMap<String, i64> = HashMap::new();
+                for chat in chats {
+                    let chat_stats: HashMap<String, String> = redis_conn
+                        .hgetall(format!("tg:chats:{}", chat))
+                        .expect("Failed to get chat stats");
+                
+                    for (key, value_str) in chat_stats {
+                        if key == "name" || key == "admin_chat" {
+                            continue;
+                        }
+                        if let Ok(value) = value_str.parse::<i64>() {
+                            *total_stats.entry(key).or_insert(0) += value;
+                        }
+                    }
+                }
+                let mut resp = String::new();
+                for (k, v) in total_stats {
+                    writeln!(&mut resp, "{}: {}", k, v).unwrap();
+                }
+                bot.send_message(admin_id, resp).await?;
             }
         }
     }
