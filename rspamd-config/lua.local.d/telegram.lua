@@ -2,33 +2,33 @@ local rspamd_redis = require "rspamd_redis"
 
 rspamd_config:register_symbol('TG_FLOOD', 1.0, function(task)
     local user_id = tostring(task:get_header('X-Telegram-User', true) or "")
+    local chat_id = tostring(task:get_header('X-Telegram-Chat', true) or "")
     if user_id == "" then return false end
     local redis_key = 'tg:users:' .. user_id
     -- Define callback to be called when Redis returns
     local function flood_cb(err, data)
       if err or not data then return end
       local count = tonumber(data) or 0
-      --rspamd_redis.make_request({task=task, host="127.0.0.1:6379",
-      --  cmd='HEXPIRE', args={redis_key, '60', 'NX', 'FIELDS', 1, 'flood'}, callback=function() end})
+      rspamd_redis.make_request({task=task, host="127.0.0.1:6379",
+        cmd='HEXPIRE', args={redis_key, '60', 'NX', 'FIELDS', 1, 'flood'}, callback=function() end})
       if count > 30 then
         local stats_key = 'tg:users:' .. user_id
-        local overall_stats = 'tg:stats'
+        local chat_stats = 'tg:chats:' .. chat_id
         rspamd_redis.make_request({task=task, host="127.0.0.1:6379",
-          cmd='HINCRBY', args={overall_stats, 'spam_count', '1'}, callback=function() end})
+          cmd='HINCRBY', args={chat_stats, 'spam_count', '1'}, callback=function() end})
         rspamd_redis.make_request({task=task, host="127.0.0.1:6379",
           cmd='HINCRBY', args={stats_key, 'rep', '1'}, callback=function() end})
         task:insert_result('TG_FLOOD', 1.0)
       end
     end
-    -- Increment flood counter and set a 60s expiry
     rspamd_redis.make_request({task=task, host="127.0.0.1:6379",
       cmd='HINCRBY', args={redis_key, 'flood', 1}, callback=flood_cb})
-    
     
   end)
 
 rspamd_config:register_symbol('TG_REPEAT', 1.0, function(task)
     local user_id = tostring(task:get_header('X-Telegram-User', true) or "")
+    local chat_id = tostring(task:get_header('X-Telegram-Chat', true) or "")
     local msg = tostring(task:get_rawbody()) or ""
     if user_id == "" then return end
     local hash_key = 'tg:users:' .. user_id
@@ -39,9 +39,9 @@ rspamd_config:register_symbol('TG_REPEAT', 1.0, function(task)
         local count = tonumber(data) or 0
         if count > 5 then
           local stats_key = 'tg:users:' .. user_id
-          local overall_stats = 'tg:stats'
-          rspamd_redis.make_request({task=task, host="127.0.0.1:6379",
-            cmd='HINCRBY', args={overall_stats, 'spam_count', '1'}, callback=function() end})
+        local chat_stats = 'tg:chats:' .. chat_id
+        rspamd_redis.make_request({task=task, host="127.0.0.1:6379",
+          cmd='HINCRBY', args={chat_stats, 'spam_count', '1'}, callback=function() end})
           rspamd_redis.make_request({task=task, host="127.0.0.1:6379",
             cmd='HINCRBY', args={stats_key, 'rep', '1'}, callback=function() end})
           task:insert_result('TG_REPEAT', 1.0)
@@ -62,6 +62,7 @@ rspamd_config:register_symbol('TG_REPEAT', 1.0, function(task)
 
 rspamd_config:register_symbol('TG_SUSPICIOUS', 1.0, function(task)
     local user_id = tostring(task:get_header('X-Telegram-User', true) or "")
+    local chat_id = tostring(task:get_header('X-Telegram-Chat', true) or "")
     if user_id == "" then return false end
     -- Increment total spam count for this user
     local function spam_cb(err, data)
@@ -69,9 +70,9 @@ rspamd_config:register_symbol('TG_SUSPICIOUS', 1.0, function(task)
       local total = tonumber(data) or 0
       if total > 10 then
         local stats_key = 'tg:users:' .. user_id
-        local overall_stats = 'tg:stats'
+        local chat_stats = 'tg:chats:' .. chat_id
         rspamd_redis.make_request({task=task, host="127.0.0.1:6379",
-          cmd='HINCRBY', args={overall_stats, 'spam_count', '1'}, callback=function() end})
+          cmd='HINCRBY', args={chat_stats, 'spam_count', '1'}, callback=function() end})
         rspamd_redis.make_request({task=task, host="127.0.0.1:6379",
           cmd='HINCRBY', args={stats_key, 'rep', '1'}, callback=function() end})
         task:insert_result('TG_SUSPICIOUS', 1.0)
