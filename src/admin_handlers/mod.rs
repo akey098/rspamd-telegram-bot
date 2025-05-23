@@ -1,6 +1,6 @@
 mod admin;
 pub mod commands;
-mod dispatcher;
+pub mod dispatcher;
 
 pub use admin::*;
 pub use dispatcher::*;
