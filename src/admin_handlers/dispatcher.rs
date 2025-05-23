@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use crate::admin_handlers::{handle_admin_command, AdminCommand};
 use crate::handlers::handle_message;
 use redis::{Commands, RedisResult};
@@ -8,6 +9,7 @@ use teloxide::prelude::{CallbackQuery, ChatId, ChatMemberUpdated, Message, Reque
 use teloxide::types::{BotCommand, ChatKind, ChatMemberStatus};
 use teloxide::utils::command::BotCommands;
 use teloxide::{Bot, RequestError};
+use std::fmt::Write;
 
 pub async fn message_handler(bot: Bot, msg: Message) -> Result<(), RequestError> {
     if let Some(text) = msg.text() {
@@ -38,11 +40,11 @@ pub async fn message_handler(bot: Bot, msg: Message) -> Result<(), RequestError>
     Ok(())
 }
 
-pub async fn callback_handler(bot: Bot, query: CallbackQuery) -> Result<(), RequestError> {
+pub async fn makeadmin_handler(bot: Bot, query: CallbackQuery) -> Result<(), RequestError> {
     if let Some(callback_data) = query.data {
         if let Some(admin_chat) = query.message {
             let admin_id = admin_chat.chat().id;
-            let selected_chat: i64 = callback_data.parse().unwrap_or(0);
+            let selected_chat: i64 = callback_data["makeadmin:".len()..].parse().unwrap();
             if selected_chat != 0 {
                 let redis_client =
                     redis::Client::open("redis://127.0.0.1/").expect("Failed to connect to Redis");
@@ -67,17 +69,33 @@ pub async fn callback_handler(bot: Bot, query: CallbackQuery) -> Result<(), Requ
     Ok(())
 }
 
-pub async fn run_dispatcher(bot: Bot) {
-    let commands:Vec<BotCommand> = AdminCommand::bot_commands();
-    let _ = bot.set_my_commands(commands).await;
-    let handler = dptree::entry()
-        .branch(Update::filter_message().endpoint(message_handler))
-        .branch(Update::filter_callback_query().endpoint(callback_handler))
-        .branch(Update::filter_chat_member().endpoint(chat_member_handler))
-        .branch(Update::filter_my_chat_member().endpoint(my_chat_member_handler));
-    Dispatcher::builder(bot, handler).build().dispatch().await;
+pub async fn stats_handler(bot: Bot, query: CallbackQuery) -> Result<(), RequestError> {
+    if let Some(callback_data) = query.data {
+        if let Some(admin_chat) = query.message {
+            let admin_id = admin_chat.chat().id;
+            let selected_chat: i64 = callback_data["makeadmin:".len()..].parse().unwrap();
+            if selected_chat != 0 {
+                let redis_client =
+                    redis::Client::open("redis://127.0.0.1/").expect("Failed to connect to Redis");
+                let mut redis_conn = redis_client
+                    .get_connection()
+                    .expect("Failed to get Redis connection");
+                let stats: HashMap<String, String> = redis_conn
+                    .hgetall(format!("tg:chats:{}", selected_chat))
+                    .expect("Failed to get chat stats");
+                let mut response = String::new();
+                for (field, value) in stats {
+                    if field == "name" || field == "admin_chat" {
+                        continue;
+                    }
+                    writeln!(&mut response, "{}: {}", field, value).unwrap();
+                }
+                bot.send_message(admin_id, response).await?;
+            }
+        }
+    }
+    Ok(())
 }
-
 
 pub async fn chat_member_handler(
     _bot: Bot,
@@ -179,4 +197,28 @@ pub async fn my_chat_member_handler(
         }
     }
     Ok(())
+}
+
+pub async fn run_dispatcher(bot: Bot) {
+    let commands:Vec<BotCommand> = AdminCommand::bot_commands();
+    let _ = bot.set_my_commands(commands).await;
+    let handler = dptree::entry()
+        .branch(Update::filter_message().endpoint(message_handler))
+        .branch(
+            Update::filter_callback_query()
+                .filter(|q: &CallbackQuery| {
+                    q.data.as_deref().map(|s| s.starts_with("makeadmin:")).unwrap_or(false)
+                })
+                .endpoint(makeadmin_handler),
+        )
+        .branch(
+            Update::filter_callback_query()
+                .filter(|q: &CallbackQuery| {
+                    q.data.as_deref().map(|s| s.starts_with("stats:")).unwrap_or(false)
+                })
+                .endpoint(stats_handler),
+        )
+        .branch(Update::filter_chat_member().endpoint(chat_member_handler))
+        .branch(Update::filter_my_chat_member().endpoint(my_chat_member_handler));
+    Dispatcher::builder(bot, handler).build().dispatch().await;
 }
