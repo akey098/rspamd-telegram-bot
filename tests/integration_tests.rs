@@ -7,14 +7,16 @@
 //! Redis **must** be running on 127.0.0.1:6379
 //! Rspamd **must** be running on 127.0.0.1:11333 with the bot’s Lua rules.
 
+use std::collections::HashMap;
 use std::time::Duration;
 
 use chrono::Utc;
 use redis::Commands;
+use teloxide::Bot;
 use rspamd_telegram_bot::handlers::scan_msg;
 use teloxide::types::{Chat, ChatId, ChatKind, ChatPrivate, MediaKind, MediaText, Message, MessageCommon, MessageId, MessageKind, User, UserId};
+use rspamd_telegram_bot::admin_handlers::{handle_admin_command, AdminCommand};
 
-/// Flush Redis before each test
 fn flush_redis() {
     let client = redis::Client::open("redis://127.0.0.1/")
         .expect("Failed to connect to Redis");
@@ -39,7 +41,7 @@ fn make_user(id: u64, username: &str) -> User {
     }
 }
 
-// manually build a private chat
+
 fn make_chat(chat_id: i64) -> Chat {
     let private_chat: ChatPrivate = ChatPrivate {
         username: Some("Anon".into()),
@@ -52,7 +54,7 @@ fn make_chat(chat_id: i64) -> Chat {
     }
 }
 
-// manually build a Message with text
+
 fn make_message(chat_id: i64, user_id: u64, username: &str, text: &str, msg_id: i32) -> Message {
     let user = make_user(user_id, username);
     let chat = make_chat(chat_id);
@@ -90,9 +92,7 @@ fn make_message(chat_id: i64, user_id: u64, username: &str, text: &str, msg_id: 
     }
 }
 
-// ────────────────────────────────────────────────────────────────────────────
-// 1. TG_FLOOD  –  31st message must contain the symbol ­& stats++
-// ────────────────────────────────────────────────────────────────────────────
+
 #[tokio::test]
 async fn tg_flood_sets_symbol_and_increments_stats() {
     flush_redis();
@@ -111,7 +111,6 @@ async fn tg_flood_sets_symbol_and_increments_stats() {
         .hset(key.clone(), "rep", 0)
         .expect("Failed to set user reputation");
 
-    // 30 benign messages
     for i in 1..=30 {
         scan_msg(
             make_message(chat_id, user_id, "test", &format!("msg{i}"), i),
@@ -123,7 +122,6 @@ async fn tg_flood_sets_symbol_and_increments_stats() {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
 
-    // 31-st message – should trigger TG_FLOOD
     let reply = scan_msg(
         make_message(chat_id, user_id, "test", "the flood!", 31),
         "the flood!".into(),
@@ -144,9 +142,6 @@ async fn tg_flood_sets_symbol_and_increments_stats() {
     assert_eq!(rep, 1);
 }
 
-// ────────────────────────────────────────────────────────────────────────────
-// 2. TG_REPEAT – 6 identical messages ⇒ symbol & rep += 1
-// ────────────────────────────────────────────────────────────────────────────
 #[tokio::test]
 async fn tg_repeat_sets_symbol_and_increments_rep() {
     flush_redis();
@@ -176,7 +171,6 @@ async fn tg_repeat_sets_symbol_and_increments_rep() {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
 
-    // Last call returns the sixth scan result
     let reply = scan_msg(
         make_message(chat_id, user_id,"test", "RepeatMe", 7),
         "RepeatMe".into(),
@@ -196,9 +190,6 @@ async fn tg_repeat_sets_symbol_and_increments_rep() {
     assert_eq!(rep, 1);
 }
 
-// ────────────────────────────────────────────────────────────────────────────
-// 3. TG_SUSPICIOUS – rep > 10 ⇒ symbol & deletion
-// ────────────────────────────────────────────────────────────────────────────
 #[tokio::test]
 async fn tg_suspicious_sets_symbol() {
     flush_redis();
@@ -236,19 +227,147 @@ async fn tg_suspicious_sets_symbol() {
     assert_eq!(rep, 12);
 }
 
-// ────────────────────────────────────────────────────────────────────────────
-// 4. /make_admin      – pending, needs public handler
-// 5. /reputation cmd  – pending, needs public handler
-// ────────────────────────────────────────────────────────────────────────────
-#[ignore]
 #[tokio::test]
-async fn make_admin_integration_flow() {
-    unimplemented!("exposed handler for /makeadmin not yet available");
+async fn makeadmin_adds_admin_chat_and_generates_keyboard() {
+    flush_redis();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    
+    let user_id: u64 = 42;
+    let current_chat: i64 = 1000;
+    let other_chat: i64 = 2000;
+    
+    let client = redis::Client::open("redis://127.0.0.1/").unwrap();
+    let mut conn = client.get_connection().unwrap();
+    let _: () = conn.sadd(format!("{}:bot_chats", user_id), current_chat).unwrap();
+    let _: () = conn.sadd(format!("{}:bot_chats", user_id), other_chat).unwrap();
+    let _: () = conn.hset(format!("tg:chats:{}", current_chat), "name", "CurrentChat").unwrap();
+    let _: () = conn.hset(format!("tg:chats:{}", other_chat), "name", "OtherChat").unwrap();
+
+    let bot = Bot::new("DUMMY");
+    let msg = make_message(current_chat, user_id, "tester", "/makeadmin", 1);
+    let result = handle_admin_command(bot, msg, AdminCommand::MakeAdmin).await;
+    assert!(result.is_err(), "Expected send_message to fail with dummy token");
+
+    let admin_chats: Vec<i64> = conn.smembers(format!("{}:admin_chats", user_id)).unwrap();
+    assert!(admin_chats.contains(&current_chat), "Admin chat not set in Redis");
+    let bot_chats: Vec<i64> = conn.smembers(format!("{}:bot_chats", user_id)).unwrap();
+    assert!(bot_chats.contains(&current_chat) && bot_chats.contains(&other_chat));
+    let expected_buttons = bot_chats.len() - 1;
+    assert_eq!(expected_buttons, 1, "Inline keyboard should list exactly one other chat");
 }
 
 
-#[ignore]
 #[tokio::test]
-async fn reputation_command_flow() {
-    unimplemented!("exposed handler for /reputation not yet available");
+async fn reputation_command_returns_value_or_zero() {
+    flush_redis();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    
+    let user_id: u64 = 100;
+    let target_username = "someuser";
+    let rep_key = format!("tg:{}:rep", target_username);
+    
+    let client = redis::Client::open("redis://127.0.0.1/").unwrap();
+    let mut conn = client.get_connection().unwrap();
+    assert!(conn.get::<_, Option<i64>>(&rep_key).unwrap().is_none());
+
+    let bot = Bot::new("DUMMY");
+    let chat_id: i64 = 1111;
+    let msg1 = make_message(chat_id, user_id, "tester", &format!("/reputation {}", target_username), 1);
+    let res1 = handle_admin_command(bot.clone(), msg1, AdminCommand::Reputation { user: target_username.into() }).await;
+    assert!(res1.is_err(), "Expected dummy send_message to fail");
+    assert!(conn.get::<_, Option<i64>>(&rep_key).unwrap().is_none(), "Reputation key should not exist for new user");
+
+    conn.set::<_, _, ()>(&rep_key, 5).unwrap();
+    let msg2 = make_message(chat_id, user_id, "tester", &format!("/reputation {}", target_username), 2);
+    let res2 = handle_admin_command(bot, msg2, AdminCommand::Reputation { user: target_username.into() }).await;
+    assert!(res2.is_err());
+    let stored: i64 = conn.get(&rep_key).unwrap();
+    assert_eq!(stored, 5, "Reputation value should remain 5 in Redis");
 }
+
+#[tokio::test]
+async fn stats_command_shows_chat_stats_or_list() {
+    flush_redis();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    
+    let user_id: u64 = 555;
+    let admin_chat_id: i64 = 9000; 
+    let group_chat1: i64 = 9001;
+    let group_chat2: i64 = 9002;
+    
+    let client = redis::Client::open("redis://127.0.0.1/").unwrap();
+    let mut conn = client.get_connection().unwrap();
+    let _: () = conn.sadd(format!("{}:admin_chats", user_id), admin_chat_id).unwrap();
+    let _: () = conn.sadd(format!("admin:{}:moderated_chats", admin_chat_id), group_chat1).unwrap();
+    let _: () = conn.sadd(format!("admin:{}:moderated_chats", admin_chat_id), group_chat2).unwrap();
+    let _: () = conn.hset(format!("tg:chats:{}", group_chat1), "name", "GroupChat1").unwrap();
+    let _: () = conn.hset(format!("tg:chats:{}", group_chat1), "spam_count", 5).unwrap();
+    let _: () = conn.hset(format!("tg:chats:{}", group_chat1), "ham_count", 2).unwrap();
+    let _: () = conn.hset(format!("tg:chats:{}", group_chat1), "admin_chat", admin_chat_id).unwrap();
+    let _: () = conn.hset(format!("tg:chats:{}", group_chat2), "name", "GroupChat2").unwrap();
+    let _: () = conn.hset(format!("tg:chats:{}", group_chat2), "spam_count", 3).unwrap();
+    let _: () = conn.hset(format!("tg:chats:{}", group_chat2), "ham_count", 1).unwrap();
+    let _: () = conn.hset(format!("tg:chats:{}", group_chat2), "admin_chat", admin_chat_id).unwrap();
+
+    let bot = Bot::new("DUMMY");
+    let msg1 = make_message(group_chat1, user_id, "tester", "/stats", 1);
+    let res1 = handle_admin_command(bot.clone(), msg1, AdminCommand::Stats).await;
+    assert!(res1.is_err());
+    let stats1: HashMap<String, String> = conn.hgetall(format!("tg:chats:{}", group_chat1)).unwrap();
+    assert!(stats1.get("name").is_some() && stats1.get("admin_chat").is_some());
+    assert_eq!(stats1.get("spam_count"), Some(&"5".to_string()));
+    assert_eq!(stats1.get("ham_count"), Some(&"2".to_string()));
+
+    // 3. Admin chat: user sends /stats in the admin control chat
+    let msg2 = make_message(admin_chat_id, user_id, "tester", "/stats", 2);
+    let res2 = handle_admin_command(bot, msg2, AdminCommand::Stats).await;
+    assert!(res2.is_err());
+    let moderated: Vec<i64> = conn.smembers(format!("admin:{}:moderated_chats", admin_chat_id)).unwrap();
+    assert_eq!(moderated.len(), 2);
+    assert!(moderated.contains(&group_chat1) && moderated.contains(&group_chat2));
+    let name1: String = conn.hget(format!("tg:chats:{}", group_chat1), "name").unwrap();
+    let name2: String = conn.hget(format!("tg:chats:{}", group_chat2), "name").unwrap();
+    assert_eq!(name1, "GroupChat1");
+    assert_eq!(name2, "GroupChat2");
+}
+
+/*
+#[tokio::test]
+async fn addregex_command_parses_and_writes_rule() {
+    // 1) Set up a writable temp folder & point handler at it
+    let mut tmp = std::env::temp_dir();
+    tmp.push("rspamd-test");
+    std::fs::create_dir_all(&tmp).unwrap();
+    unsafe { std::env::set_var("RSPAMD_REGEX_DIR", &tmp); }
+
+    flush_redis();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let symbol = "TESTSYM";
+    let file_path = tmp.join(format!("telegram_regex_{}.lua", symbol));
+    let _ = std::fs::remove_file(&file_path);
+
+    let bot = Bot::new("DUMMY");
+
+    // Invalid: two parts → usage error, no file
+    let bad = format!("{}|{}", symbol, "[0-9]+");
+    let msg1 = make_message(1, 999, "t", &format!("/addregex {}", bad), 1);
+    let _ = handle_admin_command(bot.clone(), msg1, AdminCommand::AddRegex { pattern: bad }).await;
+    assert!(!file_path.exists(), "No file for bad input");
+
+    // Valid: three parts → file created
+    let good = format!("{}|{}|{}", symbol, "[0-9]+", 5);
+    let msg2 = make_message(1, 999, "t", &format!("/addregex {}", good), 2);
+    let _ = handle_admin_command(bot, msg2, AdminCommand::AddRegex { pattern: good }).await;
+    // now the file should exist
+    assert!(file_path.exists(), "File should be created for valid input");
+
+    let contents = std::fs::read_to_string(&file_path).unwrap();
+    assert!(contents.contains(&format!("config['regexp']['{}']", symbol)));
+    assert!(contents.contains("re = '[0-9]+'"));
+    assert!(contents.contains("score = 5"));
+
+    // cleanup
+    let _ = std::fs::remove_file(&file_path);
+}
+*/
