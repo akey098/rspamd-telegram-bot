@@ -10,6 +10,7 @@ use teloxide::types::{BotCommand, ChatKind, ChatMemberStatus};
 use teloxide::utils::command::BotCommands;
 use teloxide::{Bot, RequestError};
 use std::fmt::Write;
+use teloxide::sugar::bot::BotMessagesExt;
 
 pub async fn message_handler(bot: Bot, msg: Message) -> Result<(), RequestError> {
     if let Some(text) = msg.text() {
@@ -18,7 +19,7 @@ pub async fn message_handler(bot: Bot, msg: Message) -> Result<(), RequestError>
         let key = format!("tg:users:{}", msg.clone().from.unwrap().id.0);
 
         let user_rep: RedisResult<i64> = conn.hget(&key, "rep");
-
+        
         match user_rep {
             Ok(_) => {}
             Err(_) => {
@@ -29,6 +30,13 @@ pub async fn message_handler(bot: Bot, msg: Message) -> Result<(), RequestError>
                     .hset(key.clone(), "username", msg.clone().from.unwrap().username.unwrap().to_string())
                     .expect("Failed to update user's reputation");
             }
+        }
+        
+        let user_banned: bool = conn
+            .hexists(key, "banned")
+            .expect("Failed to check user's banned.");
+        if user_banned {
+            let _ = bot.delete(&msg).await;
         }
         
         if let Ok(cmd) = AdminCommand::parse(text, "rspamd-bot") {
