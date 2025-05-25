@@ -134,10 +134,6 @@ pub async fn handle_admin_command(bot: Bot, msg: Message, cmd: AdminCommand) -> 
                     }
                 }
             }
-            AdminCommand::Recent => {
-                bot.send_message(chat_id, "Recent flagged messages: [Placeholder]")
-                    .await?;
-            }
             AdminCommand::AddRegex { pattern } => {
                 let parts: Vec<&str> = pattern.split('|').map(str::trim).collect();
                 if parts.len() != 3 {
