@@ -50,6 +50,7 @@ RUN apt-get update && \
 
 # Копирование всех lua-файлов и settings.conf
 COPY rspamd-config/lua.local.d /etc/rspamd/lua.local.d/
+COPY rspamd-config/modules.local.d /etc/rspamd/modules.local.d/
 
 # Проверка конфигурации Rspamd на этапе сборки
 RUN rspamadm configtest
