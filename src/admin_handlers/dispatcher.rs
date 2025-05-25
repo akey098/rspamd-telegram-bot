@@ -59,13 +59,10 @@ async fn mute_user_for(
     user_id: UserId,
     seconds: i64,
 ) -> anyhow::Result<()> {
-    // calculate the “until” timestamp
-    let until_ts = (Utc::now() + Duration::seconds(seconds));
+    let until_ts = Utc::now() + Duration::seconds(seconds);
 
-    // build a permissions struct that disallows sending anything
     let perms = ChatPermissions::empty();
 
-    // call restrictChatMember with until_date
     bot.restrict_chat_member(chat_id, user_id, perms)
         .until_date(until_ts)
         .await?;
