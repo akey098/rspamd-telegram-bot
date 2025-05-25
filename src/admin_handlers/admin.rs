@@ -6,6 +6,9 @@ use teloxide::types::{Chat, ChatMemberStatus};
 use teloxide::{prelude::*, types::InlineKeyboardButton, types::InlineKeyboardMarkup};
 use tokio::fs::OpenOptions;
 use tokio::io::AsyncWriteExt;
+use tokio::process::Command;
+
+use anyhow::Result;
 
 async fn is_user_admin(bot: &Bot, chat: Chat, user_id: UserId) -> anyhow::Result<bool> {
     if !chat.is_private() {
@@ -165,8 +168,8 @@ pub async fn handle_admin_command(bot: Bot, msg: Message, cmd: AdminCommand) -> 
                         return Ok(());
                     }
                 };
-                
-                
+
+                let _ = restart_rspamd_async();
                 
                 if let Err(e) = file.write_all(lua_rule.as_bytes()).await {
                     bot.send_message(chat_id, format!("Failed to write: {e}")).await?;
@@ -183,4 +186,21 @@ pub async fn handle_admin_command(bot: Bot, msg: Message, cmd: AdminCommand) -> 
         bot.send_message(chat_id, "You are not admin").await?;
     }
     Ok(())
+}
+
+async fn restart_rspamd_async() -> Result<()> {
+    let output = Command::new("sudo")
+        .arg("service")
+        .arg("rspamd")
+        .arg("restart")
+        .output()                // runs and collects stdout/stderr
+        .await?;
+
+    if output.status.success() {
+        println!("rspamd restarted successfully");
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(anyhow::anyhow!("rspamd restart failed: {}", stderr))
+    }
 }
