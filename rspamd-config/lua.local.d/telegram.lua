@@ -1,20 +1,30 @@
 local rspamd_redis = require "rspamd_redis"
 
+local settings = {
+    flood = 30,
+    repeated = 6,
+    suspicious = 10,
+    ban = 20,
+    user_prefix = 'tg:users:',
+    chat_prefix = 'tg:chats:',
+    exp_flood = '60',
+    exp_ban = '3600'
+}
+
 rspamd_config:register_symbol('TG_FLOOD', 1.0, function(task)
     local user_id = tostring(task:get_header('X-Telegram-User', true) or "")
     local chat_id = tostring(task:get_header('X-Telegram-Chat', true) or "")
     if user_id == "" then return false end
-    local user_key = 'tg:users:' .. user_id
-    -- Define callback to be called when Redis returns
+    local user_key = settings.user_prefix .. user_id
     local function flood_cb(err, data)
       if err or not data then return end
       local count = tonumber(data) or 0
       rspamd_redis.make_request({task=task, host="127.0.0.1:6379",
-        cmd='HEXPIRE', args={user_key, '60', 'NX', 'FIELDS', 1, 'flood'}, callback=function() end})
-      if count > 30 then
-        local chat_stats = 'tg:chats:' .. chat_id
+        cmd='HEXPIRE', args={user_key, settings.exp_flood, 'NX', 'FIELDS', 1, 'flood'}, callback=function() end})
+      if count > settings.flood then
+        local chat_key = settings.chat_prefix .. chat_id
         rspamd_redis.make_request({task=task, host="127.0.0.1:6379",
-          cmd='HINCRBY', args={chat_stats, 'spam_count', '1'}, callback=function() end})
+          cmd='HINCRBY', args={chat_key, 'spam_count', '1'}, callback=function() end})
         rspamd_redis.make_request({task=task, host="127.0.0.1:6379",
           cmd='HINCRBY', args={user_key, 'rep', '1'}, callback=function() end})
         task:insert_result('TG_FLOOD', 1.0)
@@ -30,19 +40,18 @@ rspamd_config:register_symbol('TG_REPEAT', 1.0, function(task)
     local chat_id = tostring(task:get_header('X-Telegram-Chat', true) or "")
     local msg = tostring(task:get_rawbody()) or ""
     if user_id == "" then return end
-    local user_key = 'tg:users:' .. user_id
+    local user_key = settings.user_prefix .. user_id
     -- Use HINCRBY on a hash field for the message text
     local function last_msg_cb(_, data)
       local function get_count_cb(_err, _data)
         if _err then return end
         local count = tonumber(_data) or 0
-        if count > 5 then
-          local stats_key = 'tg:users:' .. user_id
-        local chat_stats = 'tg:chats:' .. chat_id
-        rspamd_redis.make_request({task=task, host="127.0.0.1:6379",
-          cmd='HINCRBY', args={chat_stats, 'spam_count', '1'}, callback=function() end})
+        if count > settings.repeated then
+          local chat_key = settings.chat_prefix .. chat_id
           rspamd_redis.make_request({task=task, host="127.0.0.1:6379",
-            cmd='HINCRBY', args={stats_key, 'rep', '1'}, callback=function() end})
+          cmd='HINCRBY', args={chat_key, 'spam_count', '1'}, callback=function() end})
+          rspamd_redis.make_request({task=task, host="127.0.0.1:6379",
+            cmd='HINCRBY', args={user_key, 'rep', '1'}, callback=function() end})
           task:insert_result('TG_REPEAT', 1.0)
         end
       end
@@ -61,13 +70,12 @@ rspamd_config:register_symbol('TG_SUSPICIOUS', 1.0, function(task)
     local user_id = tostring(task:get_header('X-Telegram-User', true) or "")
     local chat_id = tostring(task:get_header('X-Telegram-Chat', true) or "")
     if user_id == "" then return false end
-    local user_key = 'tg:users:' .. user_id
+    local user_key = settings.user_prefix .. user_id
     local function spam_cb(err, data)
       if err or not data then return end
       local total = tonumber(data) or 0
-      if total > 10 then
-
-        local chat_stats = 'tg:chats:' .. chat_id
+      if total > settings.suspicious then
+        local chat_stats = settings.chat_prefix .. chat_id
         rspamd_redis.make_request({task=task, host="127.0.0.1:6379",
           cmd='HINCRBY', args={chat_stats, 'spam_count', '1'}, callback=function() end})
         rspamd_redis.make_request({task=task, host="127.0.0.1:6379",
@@ -83,18 +91,18 @@ rspamd_config:register_symbol('TG_BAN', 1.0, function(task)
     local user_id = tostring(task:get_header('X-Telegram-User', true) or "")
     local chat_id = tostring(task:get_header('X-Telegram-Chat', true) or "")
     if user_id == "" then return false end
-    local user_key = 'tg:users:' .. user_id
+    local user_key = settings.user_prefix .. user_id
     local function ban_cb(err, data)
         if err or not data then return end
         local total = tonumber(data) or 0
-        if total > 20 then
-            local chat_stats = 'tg:chats:' .. chat_id
+        if total > settings.ban then
+            local chat_stats = settings.chat_prefix .. chat_id
             rspamd_redis.make_request({task=task, host="127.0.0.1:6379",
                                        cmd='HINCRBY', args={chat_stats, 'banned', '1'}, callback=function() end})
             local function banned_cb(_err, _data)
                 if _err or not _data then return end
                 rspamd_redis.make_request({task=task, host="127.0.0.1:6379",
-                                           cmd='HEXPIRE', args={user_key, '3600', 'FIELDS', 1, 'banned'}, callback=function() end})
+                                           cmd='HEXPIRE', args={user_key, settings.exp_ban, 'FIELDS', 1, 'banned'}, callback=function() end})
             end
             rspamd_redis.make_request({task=task, host="127.0.0.1:6379",
                                        cmd='HSET', args={user_key, 'banned', '1'}, callback=banned_cb})
