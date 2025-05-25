@@ -13,8 +13,6 @@ pub enum AdminCommand {
     Stats,
     #[command(description = "show user reputation.")]
     Reputation { user: String },
-    #[command(description = "show recent flagged messages.")]
-    Recent,
     #[command(description = "add a regex filter.")]
     AddRegex { pattern: String },
     #[command(description = "make this chat admin-chat.")]
