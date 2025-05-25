@@ -4,12 +4,13 @@ use crate::handlers::handle_message;
 use redis::{Commands, RedisResult};
 use teloxide::dispatching::{Dispatcher, UpdateFilterExt};
 use teloxide::dptree;
-use teloxide::payloads::AnswerCallbackQuerySetters;
-use teloxide::prelude::{CallbackQuery, ChatId, ChatMemberUpdated, Message, Requester, Update};
-use teloxide::types::{BotCommand, ChatKind, ChatMemberStatus};
+use teloxide::payloads::{AnswerCallbackQuerySetters, RestrictChatMemberSetters};
+use teloxide::prelude::{CallbackQuery, ChatId, ChatMemberUpdated, Message, Requester, Update, UserId};
+use teloxide::types::{BotCommand, ChatKind, ChatMemberStatus, ChatPermissions};
 use teloxide::utils::command::BotCommands;
 use teloxide::{Bot, RequestError};
 use std::fmt::Write;
+use chrono::{Duration, Utc};
 use teloxide::sugar::bot::BotMessagesExt;
 
 pub async fn message_handler(bot: Bot, msg: Message) -> Result<(), RequestError> {
@@ -33,7 +34,7 @@ pub async fn message_handler(bot: Bot, msg: Message) -> Result<(), RequestError>
         }
         
         let user_banned: bool = conn
-            .hexists(key, "banned")
+            .hexists(key.clone(), "banned")
             .expect("Failed to check user's banned.");
         if user_banned {
             let _ = bot.delete(&msg).await;
@@ -43,8 +44,32 @@ pub async fn message_handler(bot: Bot, msg: Message) -> Result<(), RequestError>
             handle_admin_command(bot.clone(), msg.clone(), cmd).await?;
         } else {
             let _ = handle_message(bot.clone(), msg.clone()).await;
+            let ttl: i64 = conn
+                .httl(key.clone(), "banned")
+                .expect("Failed to check user's banned.");
+            let _ = mute_user_for(bot, msg.chat.id, msg.from.unwrap().id, ttl).await;
         }
     }
+    Ok(())
+}
+
+async fn mute_user_for(
+    bot: Bot,
+    chat_id: ChatId,
+    user_id: UserId,
+    seconds: i64,
+) -> anyhow::Result<()> {
+    // calculate the “until” timestamp
+    let until_ts = (Utc::now() + Duration::seconds(seconds));
+
+    // build a permissions struct that disallows sending anything
+    let perms = ChatPermissions::empty();
+
+    // call restrictChatMember with until_date
+    bot.restrict_chat_member(chat_id, user_id, perms)
+        .until_date(until_ts)
+        .await?;
+
     Ok(())
 }
 
