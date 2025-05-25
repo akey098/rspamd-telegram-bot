@@ -21,8 +21,16 @@ pub async fn handle_message(
         .expect("Failed to get Redis connection");
     let user_id = message.from.unwrap().id;
     let chat_id = message.chat.id;
-    let key = format!("chat:{}:admin_chat", chat_id);
-    let admin_chat: Vec<i64> = redis_conn.smembers(key)?;
+    let key = format!("tg:chats:{}", chat_id);
+    let admin_chat_exists: bool = redis_conn
+        .hexists(key.clone(), "admin_chat")
+        .expect("Failed to check if admin chat exists");
+    let mut admin_chat: Vec<i64> =  Vec::new();
+    if admin_chat_exists {
+        admin_chat = redis_conn
+            .hget(key.clone(), "admin_chat")
+            .expect("Failed to get admin chat");
+    }
     if scan_result.score >= 10.0
         || scan_result.symbols.contains_key("TG_FLOOD")
         || scan_result.symbols.contains_key("TG_SUSPICIOUS")
@@ -33,9 +41,9 @@ pub async fn handle_message(
         );
         bot.delete_message(message.chat.id, message.id).await?;
         let _: () = redis_conn
-            .hincr("tg:stats", "deleted", 1)
+            .hincr(key.clone(), "deleted", 1)
             .expect("Failed to update deleted count");
-        if admin_chat.len() != 0 {
+        if admin_chat_exists {
             bot.send_message(
                 ChatId(admin_chat[0]),
                 format!(
@@ -59,7 +67,7 @@ pub async fn handle_message(
             "Warning user {} in chat {} about spammy behavior.",
             user_id, message.chat.id
         );
-        if admin_chat.len() != 0 {
+        if admin_chat_exists {
             bot.send_message(
                 ChatId(admin_chat[0]),
                 format!(
