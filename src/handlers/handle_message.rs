@@ -2,6 +2,7 @@ use crate::handlers::scan_msg;
 use redis::Commands;
 use std::error::Error;
 use teloxide::prelude::*;
+use crate::config::key;
 
 pub async fn handle_message(
     bot: Bot,
@@ -21,7 +22,7 @@ pub async fn handle_message(
         .expect("Failed to get Redis connection");
     let user_id = message.from.unwrap().id;
     let chat_id = message.chat.id;
-    let key = format!("tg:chats:{}", chat_id);
+    let key = format!("{}{}", key::TG_CHATS_PREFIX, chat_id);
     let admin_chat_exists: bool = redis_conn
         .hexists(key.clone(), "admin_chat")
         .expect("Failed to check if admin chat exists");

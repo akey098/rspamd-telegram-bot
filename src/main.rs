@@ -3,10 +3,9 @@ use std::error::Error;
 use redis::Commands;
 use teloxide::prelude::*;
 use tokio::time;
-
-mod admin_handlers;
-mod handlers;
-
+use rspamd_telegram_bot::config::{key, suffix};
+use rspamd_telegram_bot::admin_handlers;
+use rspamd_telegram_bot::handlers;
 
 #[tokio::main]
 async fn main() {
@@ -38,7 +37,7 @@ async fn do_periodic() -> Result<(), Box<dyn Error + Send + Sync>> {
         .expect("Failed to get Redis connection");
 
     let keys: Vec<String> = redis_conn
-        .keys("tg:users:*")
+        .keys(format!("{}*", key::TG_USERS_PREFIX))
         .expect("Failed to get users keys");
 
     for key in keys {

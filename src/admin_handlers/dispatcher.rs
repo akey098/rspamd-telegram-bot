@@ -12,12 +12,13 @@ use teloxide::{Bot, RequestError};
 use std::fmt::Write;
 use chrono::{Duration, Utc};
 use teloxide::sugar::bot::BotMessagesExt;
+use crate::config::key;
 
 pub async fn message_handler(bot: Bot, msg: Message) -> Result<(), RequestError> {
     if let Some(text) = msg.text() {
         let client = redis::Client::open("redis://127.0.0.1/").expect("failed to get redis client.");
         let mut conn = client.get_connection().expect("Failed to connect");
-        let key = format!("tg:users:{}", msg.clone().from.unwrap().id.0);
+        let key = format!("{}{}", key::TG_USERS_PREFIX, msg.clone().from.unwrap().id.0);
 
         let user_rep: RedisResult<i64> = conn.hget(&key, "rep");
         
@@ -87,7 +88,7 @@ pub async fn makeadmin_handler(bot: Bot, query: CallbackQuery) -> Result<(), Req
                     .expect("Failed to add moderated chat to admin");
                 
                 let _: () = redis_conn
-                    .hset(format!("tg:chats:{}", selected_chat.clone()), "admin_chat", admin_id.0)
+                    .hset(format!("{}{}", key::TG_CHATS_PREFIX, selected_chat.clone()), "admin_chat", admin_id.0)
                     .expect("Failed to add admin chat to selected chat");
 
                 bot.answer_callback_query(query.id)
@@ -111,7 +112,7 @@ pub async fn stats_handler(bot: Bot, query: CallbackQuery) -> Result<(), Request
                 .expect("Failed to get Redis connection");
             if selected_chat != 0 {
                 let stats: HashMap<String, String> = redis_conn
-                    .hgetall(format!("tg:chats:{}", selected_chat))
+                    .hgetall(format!("{}{}", key::TG_CHATS_PREFIX, selected_chat))
                     .expect("Failed to get chat stats");
                 let mut response = String::new();
                 for (field, value) in stats {
@@ -128,7 +129,7 @@ pub async fn stats_handler(bot: Bot, query: CallbackQuery) -> Result<(), Request
                 let mut total_stats: HashMap<String, i64> = HashMap::new();
                 for chat in chats {
                     let chat_stats: HashMap<String, String> = redis_conn
-                        .hgetall(format!("tg:chats:{}", chat))
+                        .hgetall(format!("{}{}", key::TG_CHATS_PREFIX, chat))
                         .expect("Failed to get chat stats");
                 
                     for (key, value_str) in chat_stats {
@@ -161,7 +162,7 @@ pub async fn chat_member_handler(
 
     let client = redis::Client::open("redis://127.0.0.1/").expect("failed to get redis client.");
     let mut conn = client.get_connection().expect("Failed to connect");
-    let key = format!("tg:users:{}", update.new_chat_member.user.id.0);
+    let key = format!("{}{}", key::TG_USERS_PREFIX, update.new_chat_member.user.id.0);
     let admin_key = format!("{}:bot_chats", update.new_chat_member.user.id);
 
     match new_status {
@@ -207,7 +208,7 @@ pub async fn my_chat_member_handler(
     let mut conn = client.get_connection().expect("Failed to connect");
     let chat_id = ChatId(update.chat.id.0);
     let admins_key = format!("{}:admins", update.chat.id.0);
-    let chat_key = format!("tg:chats:{}", update.chat.id.0);
+    let chat_key = format!("{}{}", key::TG_CHATS_PREFIX, update.chat.id.0);
     if update.new_chat_member.status() == ChatMemberStatus::Banned || update.new_chat_member.status() == ChatMemberStatus::Left || update.new_chat_member.status() == ChatMemberStatus::Restricted {
         let admins: Vec<String> = conn
             .smembers(admins_key.clone())

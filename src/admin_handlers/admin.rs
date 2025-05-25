@@ -7,6 +7,7 @@ use teloxide::{prelude::*, types::InlineKeyboardButton, types::InlineKeyboardMar
 use tokio::fs::OpenOptions;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
+use crate::config::key;
 
 use anyhow::Result;
 
@@ -47,7 +48,7 @@ pub async fn handle_admin_command(bot: Bot, msg: Message, cmd: AdminCommand) -> 
                 for chat in bot_chats {
                     if chat == chat_id.0 { continue; }
                     let chat_name: String = redis_conn
-                        .hget(format!("tg:chats:{}", chat), "name")
+                        .hget(format!("{}{}", key::TG_CHATS_PREFIX, chat), "name")
                         .expect("Failed to get chat name");
                     rows.push(vec![InlineKeyboardButton::callback(
                         format!("Chat: {}", chat_name),
@@ -88,7 +89,7 @@ pub async fn handle_admin_command(bot: Bot, msg: Message, cmd: AdminCommand) -> 
                     .expect("Failed to get admin chat");
                 if !is_admin {
                     let stats: HashMap<String, String> = redis_conn
-                        .hgetall(format!("tg:chats:{}", chat_id.0))
+                        .hgetall(format!("{}{}", key::TG_CHATS_PREFIX, chat_id.0))
                         .expect("Failed to get chat stats");
                     let mut response = String::new();
                     for (field, value) in stats {
@@ -105,7 +106,7 @@ pub async fn handle_admin_command(bot: Bot, msg: Message, cmd: AdminCommand) -> 
                     let mut rows: Vec<Vec<InlineKeyboardButton>> = Vec::new();
                     for chat in chats {
                         let chat_name: String = redis_conn
-                            .hget(format!("tg:chats:{}", chat), "name")
+                            .hget(format!("{}{}", key::TG_CHATS_PREFIX, chat), "name")
                             .expect("Failed to get chat name");
                         rows.push(vec![InlineKeyboardButton::callback(
                             format!("Chat: {}", chat_name),
@@ -122,9 +123,9 @@ pub async fn handle_admin_command(bot: Bot, msg: Message, cmd: AdminCommand) -> 
                 }
             }
             AdminCommand::Reputation { user } => {
-                let key = format!("tg:{}:rep", user);
+                let key = format!("tg:users:{}", user);
 
-                let user_rep: RedisResult<i64> = redis_conn.get(&key);
+                let user_rep: RedisResult<i64> = redis_conn.hget(key.clone(), "rep");
 
                 match user_rep {
                     Ok(rep) => {

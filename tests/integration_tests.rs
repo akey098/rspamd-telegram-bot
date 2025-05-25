@@ -7,15 +7,78 @@
 //! Redis **must** be running on 127.0.0.1:6379
 //! Rspamd **must** be running on 127.0.0.1:11333 with the bot’s Lua rules.
 
-use std::collections::HashMap;
 use std::time::Duration;
 
 use chrono::Utc;
 use redis::Commands;
-use teloxide::Bot;
-use rspamd_telegram_bot::handlers::scan_msg;
-use teloxide::types::{Chat, ChatId, ChatKind, ChatPrivate, MediaKind, MediaText, Message, MessageCommon, MessageId, MessageKind, User, UserId};
 use rspamd_telegram_bot::admin_handlers::{handle_admin_command, AdminCommand};
+use rspamd_telegram_bot::handlers::scan_msg;
+use rspamd_telegram_bot::config::{field, key, suffix, symbol};
+use teloxide::types::{Chat, ChatId, ChatKind, ChatPrivate, MediaKind, MediaText, Message, MessageCommon, MessageId, MessageKind, User, UserId};
+use teloxide::Bot;
+use once_cell::sync::Lazy;
+use std::{collections::HashMap, fs, io, path::Path};
+
+// 1. Define a struct matching your .conf keys:
+#[derive(Debug)]
+pub struct TelegramConfig {
+    pub flood:     u32,
+    pub repeated:  u32,
+    pub suspicious:u32,
+    pub ban:       u32,
+    pub user_prefix: String,
+    pub chat_prefix: String,
+    pub exp_flood: u64,
+    pub exp_ban:   u64,
+}
+
+impl TelegramConfig {
+    /// Load and parse the telegram.conf file.
+    pub fn load<P: AsRef<Path>>(path: P) -> io::Result<Self> {
+        let text = fs::read_to_string(path)?;
+        // strip the outer block and commas
+        let inner = text
+            .lines()
+            .skip_while(|l| !l.contains('{'))
+            .skip(1)
+            .take_while(|l| !l.contains('}'))
+            .map(|l| l.trim().trim_end_matches(','))
+            .filter(|l| !l.is_empty());
+
+        // collect key → value as strings (unquoted)
+        let mut map = HashMap::new();
+        for line in inner {
+            if let Some(eq) = line.find('=') {
+                let key = line[..eq].trim();
+                let mut val = line[eq+1..].trim();
+                // strip surrounding single-quotes if present
+                if val.starts_with('\'') && val.ends_with('\'') && val.len() >= 2 {
+                    val = &val[1..val.len()-1];
+                }
+                map.insert(key.to_string(), val.to_string());
+            }
+        }
+
+        // now pull each out, parsing numbers as needed
+        Ok(TelegramConfig {
+            flood:      map.get("flood")     .and_then(|v| v.parse().ok()).unwrap_or_default(),
+            repeated:   map.get("repeated")  .and_then(|v| v.parse().ok()).unwrap_or_default(),
+            suspicious: map.get("suspicious").and_then(|v| v.parse().ok()).unwrap_or_default(),
+            ban:        map.get("ban")       .and_then(|v| v.parse().ok()).unwrap_or_default(),
+            user_prefix: map.get("user_prefix").cloned().unwrap_or_default(),
+            chat_prefix: map.get("chat_prefix").cloned().unwrap_or_default(),
+            exp_flood:  map.get("exp_flood") .and_then(|v| v.parse().ok()).unwrap_or_default(),
+            exp_ban:    map.get("exp_ban")   .and_then(|v| v.parse().ok()).unwrap_or_default(),
+        })
+    }
+}
+
+// 2. Create a global static so every test can just do `CONFIG.flood`, etc.
+pub static CONFIG: Lazy<TelegramConfig> = Lazy::new(|| {
+    TelegramConfig::load(
+        "../rspamd-config/modules.local.d/telegram.conf"
+    ).expect("Failed to load telegram.conf for integration tests")
+});
 
 fn flush_redis() {
     let client = redis::Client::open("redis://127.0.0.1/")
@@ -55,11 +118,11 @@ fn make_chat(chat_id: i64) -> Chat {
 }
 
 
-fn make_message(chat_id: i64, user_id: u64, username: &str, text: &str, msg_id: i32) -> Message {
+fn make_message(chat_id: i64, user_id: u64, username: &str, text: &str, msg_id: u32) -> Message {
     let user = make_user(user_id, username);
     let chat = make_chat(chat_id);
     Message {
-        id: MessageId(msg_id),
+        id: MessageId(msg_id as i32),
         date: Utc::now(),
         chat,
         kind: MessageKind::Common(MessageCommon {
@@ -100,7 +163,7 @@ async fn tg_flood_sets_symbol_and_increments_stats() {
 
     let chat_id = 1001;
     let user_id = 42;
-    let key = format!("tg:users:{}", user_id);
+    let key = format!("{}{}", key::TG_USERS_PREFIX, user_id);
     
     let client = redis::Client::open("redis://127.0.0.1/")
         .expect("Failed to connect to Redis");
@@ -111,7 +174,7 @@ async fn tg_flood_sets_symbol_and_increments_stats() {
         .hset(key.clone(), "rep", 0)
         .expect("Failed to set user reputation");
 
-    for i in 1..=30 {
+    for i in 1..=CONFIG.flood {
         scan_msg(
             make_message(chat_id, user_id, "test", &format!("msg{i}"), i),
             format!("msg{i}"),
@@ -149,7 +212,7 @@ async fn tg_repeat_sets_symbol_and_increments_rep() {
 
     let chat_id = 2002;
     let user_id = 99;
-    let key = format!("tg:users:{}", user_id);
+    let key = format!("{}{}", key::TG_USERS_PREFIX, user_id);
 
     let client = redis::Client::open("redis://127.0.0.1/")
         .expect("Failed to connect to Redis");
@@ -160,7 +223,7 @@ async fn tg_repeat_sets_symbol_and_increments_rep() {
         .hset(key.clone(), "rep", 0)
         .expect("Failed to set user reputation");
 
-    for i in 1..=6 {
+    for i in 1..=CONFIG.repeated {
         let _ = scan_msg(
             make_message(chat_id, user_id,"test", "RepeatMe", i),
             "RepeatMe".into(),
@@ -197,7 +260,7 @@ async fn tg_suspicious_sets_symbol() {
 
     let chat_id = 3003;
     let user_id = 123;
-    let key = format!("tg:users:{}", user_id);
+    let key = format!("{}{}", key::TG_USERS_PREFIX, user_id);
 
     // Manually bump reputation above the threshold
     let client = redis::Client::open("redis://127.0.0.1/")
@@ -206,7 +269,7 @@ async fn tg_suspicious_sets_symbol() {
         .get_connection()
         .expect("Failed to connect to Redis");
     let _: () = conn
-        .hset(key.clone(), "rep", 11)
+        .hset(key.clone(), "rep", CONFIG.suspicious)
         .expect("Failed to set user reputation");
 
     let reply = scan_msg(
@@ -217,14 +280,14 @@ async fn tg_suspicious_sets_symbol() {
     .ok()
     .unwrap();
     tokio::time::sleep(Duration::from_millis(50)).await;
-    let rep: i64 = conn
+    let rep: u32 = conn
         .hget(key.clone(), "rep")
         .expect("Failed to get user reputation");
     assert!(
         reply.symbols.contains_key("TG_SUSPICIOUS"),
         "Expected TG_SUSPICIOUS for high-rep user"
     );
-    assert_eq!(rep, 12);
+    assert_eq!(rep, CONFIG.suspicious + 1);
 }
 
 #[tokio::test]
@@ -240,8 +303,8 @@ async fn makeadmin_adds_admin_chat_and_generates_keyboard() {
     let mut conn = client.get_connection().unwrap();
     let _: () = conn.sadd(format!("{}:bot_chats", user_id), current_chat).unwrap();
     let _: () = conn.sadd(format!("{}:bot_chats", user_id), other_chat).unwrap();
-    let _: () = conn.hset(format!("tg:chats:{}", current_chat), "name", "CurrentChat").unwrap();
-    let _: () = conn.hset(format!("tg:chats:{}", other_chat), "name", "OtherChat").unwrap();
+    let _: () = conn.hset(format!("{}{}", key::TG_CHATS_PREFIX, current_chat), "name", "CurrentChat").unwrap();
+    let _: () = conn.hset(format!("{}{}", key::TG_CHATS_PREFIX, other_chat), "name", "OtherChat").unwrap();
 
     let bot = Bot::new("DUMMY");
     let msg = make_message(current_chat, user_id, "tester", "/makeadmin", 1);
@@ -264,24 +327,26 @@ async fn reputation_command_returns_value_or_zero() {
     
     let user_id: u64 = 100;
     let target_username = "someuser";
-    let rep_key = format!("tg:{}:rep", target_username);
+    let rep_key = format!("{}{}", key::TG_USERS_PREFIX, target_username);
     
     let client = redis::Client::open("redis://127.0.0.1/").unwrap();
     let mut conn = client.get_connection().unwrap();
-    assert!(conn.get::<_, Option<i64>>(&rep_key).unwrap().is_none());
+    let res: bool = conn.hexists(rep_key.clone(), field::REP).expect("Failed to get rep");
+    assert!(res);
 
     let bot = Bot::new("DUMMY");
     let chat_id: i64 = 1111;
     let msg1 = make_message(chat_id, user_id, "tester", &format!("/reputation {}", target_username), 1);
     let res1 = handle_admin_command(bot.clone(), msg1, AdminCommand::Reputation { user: target_username.into() }).await;
     assert!(res1.is_err(), "Expected dummy send_message to fail");
-    assert!(conn.get::<_, Option<i64>>(&rep_key).unwrap().is_none(), "Reputation key should not exist for new user");
+    let rep: bool = conn.hexists(rep_key.clone(), field::REP).expect("Failed to get rep");
+    assert!(rep, "Reputation key should not exist for new user");
 
     conn.set::<_, _, ()>(&rep_key, 5).unwrap();
     let msg2 = make_message(chat_id, user_id, "tester", &format!("/reputation {}", target_username), 2);
     let res2 = handle_admin_command(bot, msg2, AdminCommand::Reputation { user: target_username.into() }).await;
     assert!(res2.is_err());
-    let stored: i64 = conn.get(&rep_key).unwrap();
+    let stored: i64 = conn.hget(rep_key.clone(), field::REP).expect("Failed to get rep");
     assert_eq!(stored, 5, "Reputation value should remain 5 in Redis");
 }
 
@@ -300,20 +365,20 @@ async fn stats_command_shows_chat_stats_or_list() {
     let _: () = conn.sadd(format!("{}:admin_chats", user_id), admin_chat_id).unwrap();
     let _: () = conn.sadd(format!("admin:{}:moderated_chats", admin_chat_id), group_chat1).unwrap();
     let _: () = conn.sadd(format!("admin:{}:moderated_chats", admin_chat_id), group_chat2).unwrap();
-    let _: () = conn.hset(format!("tg:chats:{}", group_chat1), "name", "GroupChat1").unwrap();
-    let _: () = conn.hset(format!("tg:chats:{}", group_chat1), "spam_count", 5).unwrap();
-    let _: () = conn.hset(format!("tg:chats:{}", group_chat1), "ham_count", 2).unwrap();
-    let _: () = conn.hset(format!("tg:chats:{}", group_chat1), "admin_chat", admin_chat_id).unwrap();
-    let _: () = conn.hset(format!("tg:chats:{}", group_chat2), "name", "GroupChat2").unwrap();
-    let _: () = conn.hset(format!("tg:chats:{}", group_chat2), "spam_count", 3).unwrap();
-    let _: () = conn.hset(format!("tg:chats:{}", group_chat2), "ham_count", 1).unwrap();
-    let _: () = conn.hset(format!("tg:chats:{}", group_chat2), "admin_chat", admin_chat_id).unwrap();
+    let _: () = conn.hset(format!("{}{}", key::TG_CHATS_PREFIX, group_chat1), "name", "GroupChat1").unwrap();
+    let _: () = conn.hset(format!("{}{}", key::TG_CHATS_PREFIX, group_chat1), "spam_count", 5).unwrap();
+    let _: () = conn.hset(format!("{}{}", key::TG_CHATS_PREFIX, group_chat1), "ham_count", 2).unwrap();
+    let _: () = conn.hset(format!("{}{}", key::TG_CHATS_PREFIX, group_chat1), "admin_chat", admin_chat_id).unwrap();
+    let _: () = conn.hset(format!("{}{}", key::TG_CHATS_PREFIX, group_chat2), "name", "GroupChat2").unwrap();
+    let _: () = conn.hset(format!("{}{}", key::TG_CHATS_PREFIX, group_chat2), "spam_count", 3).unwrap();
+    let _: () = conn.hset(format!("{}{}", key::TG_CHATS_PREFIX, group_chat2), "ham_count", 1).unwrap();
+    let _: () = conn.hset(format!("{}{}", key::TG_CHATS_PREFIX, group_chat2), "admin_chat", admin_chat_id).unwrap();
 
     let bot = Bot::new("DUMMY");
     let msg1 = make_message(group_chat1, user_id, "tester", "/stats", 1);
     let res1 = handle_admin_command(bot.clone(), msg1, AdminCommand::Stats).await;
     assert!(res1.is_err());
-    let stats1: HashMap<String, String> = conn.hgetall(format!("tg:chats:{}", group_chat1)).unwrap();
+    let stats1: HashMap<String, String> = conn.hgetall(format!("{}{}", key::TG_CHATS_PREFIX, group_chat1)).unwrap();
     assert!(stats1.get("name").is_some() && stats1.get("admin_chat").is_some());
     assert_eq!(stats1.get("spam_count"), Some(&"5".to_string()));
     assert_eq!(stats1.get("ham_count"), Some(&"2".to_string()));
@@ -325,8 +390,8 @@ async fn stats_command_shows_chat_stats_or_list() {
     let moderated: Vec<i64> = conn.smembers(format!("admin:{}:moderated_chats", admin_chat_id)).unwrap();
     assert_eq!(moderated.len(), 2);
     assert!(moderated.contains(&group_chat1) && moderated.contains(&group_chat2));
-    let name1: String = conn.hget(format!("tg:chats:{}", group_chat1), "name").unwrap();
-    let name2: String = conn.hget(format!("tg:chats:{}", group_chat2), "name").unwrap();
+    let name1: String = conn.hget(format!("{}{}", key::TG_CHATS_PREFIX, group_chat1), "name").unwrap();
+    let name2: String = conn.hget(format!("{}{}", key::TG_CHATS_PREFIX, group_chat2), "name").unwrap();
     assert_eq!(name1, "GroupChat1");
     assert_eq!(name2, "GroupChat2");
 }
