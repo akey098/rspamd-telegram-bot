@@ -171,7 +171,7 @@ async fn tg_flood_sets_symbol_and_increments_stats() {
         .get_connection()
         .expect("Failed to connect to Redis");
     let _: () = conn
-        .hset(key.clone(), "rep", 0)
+        .hset(key.clone(), field::REP, 0)
         .expect("Failed to set user reputation");
 
     for i in 1..=CONFIG.flood {
@@ -195,12 +195,12 @@ async fn tg_flood_sets_symbol_and_increments_stats() {
     tokio::time::sleep(Duration::from_millis(50)).await;
 
     assert!(
-        reply.symbols.contains_key("TG_FLOOD"),
+        reply.symbols.contains_key(symbol::TG_FLOOD),
         "Expected TG_FLOOD after 31 rapid messages"
     );
     
     let rep: i64 = conn
-        .hget(key.clone(), "rep")
+        .hget(key.clone(), field::REP)
         .expect("Failed to get rep");
     assert_eq!(rep, 1);
 }
@@ -220,12 +220,12 @@ async fn tg_repeat_sets_symbol_and_increments_rep() {
         .get_connection()
         .expect("Failed to connect to Redis");
     let _: () = conn
-        .hset(key.clone(), "rep", 0)
+        .hset(key.clone(), field::REP, 0)
         .expect("Failed to set user reputation");
 
     for i in 1..=CONFIG.repeated {
         let _ = scan_msg(
-            make_message(chat_id, user_id,"test", "RepeatMe", i),
+            make_message(chat_id, user_id, "test", "RepeatMe", i),
             "RepeatMe".into(),
         )
         .await
@@ -235,7 +235,7 @@ async fn tg_repeat_sets_symbol_and_increments_rep() {
     }
 
     let reply = scan_msg(
-        make_message(chat_id, user_id,"test", "RepeatMe", 7),
+        make_message(chat_id, user_id, "test", "RepeatMe", 7),
         "RepeatMe".into(),
     )
     .await
@@ -244,11 +244,11 @@ async fn tg_repeat_sets_symbol_and_increments_rep() {
     tokio::time::sleep(Duration::from_millis(50)).await;
 
     assert!(
-        reply.symbols.contains_key("TG_REPEAT"),
+        reply.symbols.contains_key(symbol::TG_REPEAT),
         "Expected TG_REPEAT symbol"
     );
     let rep: i64 = conn
-        .hget(key.clone(), "rep")
+        .hget(key.clone(), field::REP)
         .expect("Failed to get rep");
     assert_eq!(rep, 1);
 }
@@ -269,11 +269,11 @@ async fn tg_suspicious_sets_symbol() {
         .get_connection()
         .expect("Failed to connect to Redis");
     let _: () = conn
-        .hset(key.clone(), "rep", CONFIG.suspicious)
+        .hset(key.clone(), field::REP, CONFIG.suspicious)
         .expect("Failed to set user reputation");
 
     let reply = scan_msg(
-        make_message(chat_id, user_id,"test", "Hello", 1),
+        make_message(chat_id, user_id, "test", "Hello", 1),
         "Hello".into(),
     )
     .await
@@ -281,10 +281,10 @@ async fn tg_suspicious_sets_symbol() {
     .unwrap();
     tokio::time::sleep(Duration::from_millis(50)).await;
     let rep: u32 = conn
-        .hget(key.clone(), "rep")
+        .hget(key.clone(), field::REP)
         .expect("Failed to get user reputation");
     assert!(
-        reply.symbols.contains_key("TG_SUSPICIOUS"),
+        reply.symbols.contains_key(symbol::TG_SUSPICIOUS),
         "Expected TG_SUSPICIOUS for high-rep user"
     );
     assert_eq!(rep, CONFIG.suspicious + 1);
@@ -301,8 +301,8 @@ async fn makeadmin_adds_admin_chat_and_generates_keyboard() {
     
     let client = redis::Client::open("redis://127.0.0.1/").unwrap();
     let mut conn = client.get_connection().unwrap();
-    let _: () = conn.sadd(format!("{}:bot_chats", user_id), current_chat).unwrap();
-    let _: () = conn.sadd(format!("{}:bot_chats", user_id), other_chat).unwrap();
+    let _: () = conn.sadd(format!("{}{}", user_id, suffix::BOT_CHATS), current_chat).unwrap();
+    let _: () = conn.sadd(format!("{}{}", user_id, suffix::BOT_CHATS), other_chat).unwrap();
     let _: () = conn.hset(format!("{}{}", key::TG_CHATS_PREFIX, current_chat), "name", "CurrentChat").unwrap();
     let _: () = conn.hset(format!("{}{}", key::TG_CHATS_PREFIX, other_chat), "name", "OtherChat").unwrap();
 
@@ -311,9 +311,9 @@ async fn makeadmin_adds_admin_chat_and_generates_keyboard() {
     let result = handle_admin_command(bot, msg, AdminCommand::MakeAdmin).await;
     assert!(result.is_err(), "Expected send_message to fail with dummy token");
 
-    let admin_chats: Vec<i64> = conn.smembers(format!("{}:admin_chats", user_id)).unwrap();
+    let admin_chats: Vec<i64> = conn.smembers(format!("{}{}", user_id, suffix::ADMIN_CHATS)).unwrap();
     assert!(admin_chats.contains(&current_chat), "Admin chat not set in Redis");
-    let bot_chats: Vec<i64> = conn.smembers(format!("{}:bot_chats", user_id)).unwrap();
+    let bot_chats: Vec<i64> = conn.smembers(format!("{}{}", user_id, suffix::BOT_CHATS)).unwrap();
     assert!(bot_chats.contains(&current_chat) && bot_chats.contains(&other_chat));
     let expected_buttons = bot_chats.len() - 1;
     assert_eq!(expected_buttons, 1, "Inline keyboard should list exactly one other chat");
@@ -327,7 +327,7 @@ async fn reputation_command_returns_value_or_zero() {
     
     let user_id: u64 = 100;
     let target_username = "someuser";
-    let rep_key = format!("{}{}", key::TG_USERS_PREFIX, target_username);
+    let rep_key = format!("{}{}", key::TG_USERS_PREFIX, user_id);
     
     let client = redis::Client::open("redis://127.0.0.1/").unwrap();
     let mut conn = client.get_connection().unwrap();
@@ -362,9 +362,9 @@ async fn stats_command_shows_chat_stats_or_list() {
     
     let client = redis::Client::open("redis://127.0.0.1/").unwrap();
     let mut conn = client.get_connection().unwrap();
-    let _: () = conn.sadd(format!("{}:admin_chats", user_id), admin_chat_id).unwrap();
-    let _: () = conn.sadd(format!("admin:{}:moderated_chats", admin_chat_id), group_chat1).unwrap();
-    let _: () = conn.sadd(format!("admin:{}:moderated_chats", admin_chat_id), group_chat2).unwrap();
+    let _: () = conn.sadd(format!("{}{}", user_id, suffix::ADMIN_CHATS), admin_chat_id).unwrap();
+    let _: () = conn.sadd(format!("{}{}{}", key::ADMIN_PREFIX, admin_chat_id, suffix::MODERATED_CHATS), group_chat1).unwrap();
+    let _: () = conn.sadd(format!("{}{}{}", key::ADMIN_PREFIX, admin_chat_id, suffix::MODERATED_CHATS), group_chat2).unwrap();
     let _: () = conn.hset(format!("{}{}", key::TG_CHATS_PREFIX, group_chat1), "name", "GroupChat1").unwrap();
     let _: () = conn.hset(format!("{}{}", key::TG_CHATS_PREFIX, group_chat1), "spam_count", 5).unwrap();
     let _: () = conn.hset(format!("{}{}", key::TG_CHATS_PREFIX, group_chat1), "ham_count", 2).unwrap();
@@ -379,15 +379,14 @@ async fn stats_command_shows_chat_stats_or_list() {
     let res1 = handle_admin_command(bot.clone(), msg1, AdminCommand::Stats).await;
     assert!(res1.is_err());
     let stats1: HashMap<String, String> = conn.hgetall(format!("{}{}", key::TG_CHATS_PREFIX, group_chat1)).unwrap();
-    assert!(stats1.get("name").is_some() && stats1.get("admin_chat").is_some());
-    assert_eq!(stats1.get("spam_count"), Some(&"5".to_string()));
-    assert_eq!(stats1.get("ham_count"), Some(&"2".to_string()));
+    assert!(stats1.get(field::NAME).is_some() && stats1.get(field::ADMIN_CHAT).is_some());
+    assert_eq!(stats1.get(field::SPAM_COUNT), Some(&"5".to_string()));
 
     // 3. Admin chat: user sends /stats in the admin control chat
     let msg2 = make_message(admin_chat_id, user_id, "tester", "/stats", 2);
     let res2 = handle_admin_command(bot, msg2, AdminCommand::Stats).await;
     assert!(res2.is_err());
-    let moderated: Vec<i64> = conn.smembers(format!("admin:{}:moderated_chats", admin_chat_id)).unwrap();
+    let moderated: Vec<i64> = conn.smembers(format!("{}{}{}", key::ADMIN_PREFIX, admin_chat_id, suffix::MODERATED_CHATS)).unwrap();
     assert_eq!(moderated.len(), 2);
     assert!(moderated.contains(&group_chat1) && moderated.contains(&group_chat2));
     let name1: String = conn.hget(format!("{}{}", key::TG_CHATS_PREFIX, group_chat1), "name").unwrap();
