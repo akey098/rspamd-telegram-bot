@@ -76,7 +76,7 @@ impl TelegramConfig {
 // 2. Create a global static so every test can just do `CONFIG.flood`, etc.
 pub static CONFIG: Lazy<TelegramConfig> = Lazy::new(|| {
     TelegramConfig::load(
-        "../rspamd-config/modules.local.d/telegram.conf"
+        "rspamd-config/modules.local.d/telegram.conf"
     ).expect("Failed to load telegram.conf for integration tests")
 });
 
