@@ -271,7 +271,7 @@ async fn tg_suspicious_sets_symbol() {
     let _: () = conn
         .hset(key.clone(), field::REP, CONFIG.suspicious)
         .expect("Failed to set user reputation");
-
+    tokio::time::sleep(Duration::from_millis(50)).await;
     let reply = scan_msg(
         make_message(chat_id, user_id, "test", "Hello", 1),
         "Hello".into(),
