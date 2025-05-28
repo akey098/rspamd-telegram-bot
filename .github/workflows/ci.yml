@@ -1,7 +1,7 @@
 # .github/workflows/integration-tests.yml
 on:
   push:
-    branches: [ master ]
+    branches: [ main ]
 
 jobs:
   integration-tests:
