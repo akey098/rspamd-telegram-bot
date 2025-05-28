@@ -222,7 +222,7 @@ async fn tg_repeat_sets_symbol_and_increments_rep() {
     let _: () = conn
         .hset(key.clone(), field::REP, 0)
         .expect("Failed to set user reputation");
-
+    println!("{}", CONFIG.repeated);
     for i in 1..=CONFIG.repeated {
         let _ = scan_msg(
             make_message(chat_id, user_id, "test", "RepeatMe", i),
