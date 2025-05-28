@@ -174,7 +174,7 @@ async fn tg_flood_sets_symbol_and_increments_stats() {
         .hset(key.clone(), field::REP, 0)
         .expect("Failed to set user reputation");
 
-    for i in 0..=CONFIG.flood {
+    for i in 1..=CONFIG.flood {
         scan_msg(
             make_message(chat_id, user_id, "test", &format!("msg{i}"), i),
             format!("msg{i}"),
