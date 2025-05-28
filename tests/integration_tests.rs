@@ -174,7 +174,7 @@ async fn tg_flood_sets_symbol_and_increments_stats() {
         .hset(key.clone(), field::REP, 0)
         .expect("Failed to set user reputation");
 
-    for i in 1..=CONFIG.flood {
+    for i in 0..=CONFIG.flood {
         scan_msg(
             make_message(chat_id, user_id, "test", &format!("msg{i}"), i),
             format!("msg{i}"),
@@ -182,7 +182,7 @@ async fn tg_flood_sets_symbol_and_increments_stats() {
             .await
             .ok()
             .unwrap();
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        tokio::time::sleep(Duration::from_millis(500)).await;
     }
 
     let reply = scan_msg(
@@ -192,7 +192,7 @@ async fn tg_flood_sets_symbol_and_increments_stats() {
     .await
     .ok()
     .unwrap();
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
 
     assert!(
         reply.symbols.contains_key(symbol::TG_FLOOD),
@@ -223,7 +223,7 @@ async fn tg_repeat_sets_symbol_and_increments_rep() {
         .hset(key.clone(), field::REP, 0)
         .expect("Failed to set user reputation");
     println!("{}", CONFIG.repeated);
-    for i in 1..=CONFIG.repeated {
+    for i in 0..=CONFIG.repeated {
         let _ = scan_msg(
             make_message(chat_id, user_id, "test", "RepeatMe", i),
             "RepeatMe".into(),
@@ -231,7 +231,7 @@ async fn tg_repeat_sets_symbol_and_increments_rep() {
         .await
         .ok()
         .unwrap();
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        tokio::time::sleep(Duration::from_millis(500)).await;
     }
 
     let reply = scan_msg(
@@ -241,7 +241,7 @@ async fn tg_repeat_sets_symbol_and_increments_rep() {
     .await
     .ok()
     .unwrap();
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
 
     assert!(
         reply.symbols.contains_key(symbol::TG_REPEAT),
@@ -269,7 +269,7 @@ async fn tg_suspicious_sets_symbol() {
         .get_connection()
         .expect("Failed to connect to Redis");
     let _: () = conn
-        .hset(key.clone(), field::REP, CONFIG.suspicious)
+        .hset(key.clone(), field::REP, CONFIG.suspicious + 1)
         .expect("Failed to set user reputation");
     tokio::time::sleep(Duration::from_millis(50)).await;
     let reply = scan_msg(
@@ -287,7 +287,7 @@ async fn tg_suspicious_sets_symbol() {
         reply.symbols.contains_key(symbol::TG_SUSPICIOUS),
         "Expected TG_SUSPICIOUS for high-rep user"
     );
-    assert_eq!(rep, CONFIG.suspicious + 1);
+    assert_eq!(rep, CONFIG.suspicious + 2);
 }
 
 #[tokio::test]
