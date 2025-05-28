@@ -331,7 +331,7 @@ async fn reputation_command_returns_value_or_zero() {
     
     let client = redis::Client::open("redis://127.0.0.1/").unwrap();
     let mut conn = client.get_connection().unwrap();
-    let res: bool = conn.hexists(rep_key.clone(), field::REP).expect("Failed to get rep");
+    let res: bool = conn.hset(rep_key.clone(), field::REP, 0).expect("Failed to set rep");
     assert!(res);
 
     let bot = Bot::new("DUMMY");
@@ -342,7 +342,7 @@ async fn reputation_command_returns_value_or_zero() {
     let rep: bool = conn.hexists(rep_key.clone(), field::REP).expect("Failed to get rep");
     assert!(rep, "Reputation key should not exist for new user");
 
-    conn.set::<_, _, ()>(&rep_key, 5).unwrap();
+    let _:() = conn.hset(rep_key.clone(), field::REP, 5).expect("Failed to set rep");
     let msg2 = make_message(chat_id, user_id, "tester", &format!("/reputation {}", target_username), 2);
     let res2 = handle_admin_command(bot, msg2, AdminCommand::Reputation { user: target_username.into() }).await;
     assert!(res2.is_err());
