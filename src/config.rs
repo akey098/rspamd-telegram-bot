@@ -58,4 +58,6 @@ pub mod symbol {
     pub const TG_SUSPICIOUS: &str = "TG_SUSPICIOUS";
     /// Symbol for ban-worthy spam activity detected (`TG_BAN`).
     pub const TG_BAN: &str = "TG_BAN";
+    /// Symbol for permanently banned user (`TG_PERM_BAN`)
+    pub const TG_PERM_BAN: &str = "TG_PERM_BAN";
 }
