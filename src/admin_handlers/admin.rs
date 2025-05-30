@@ -7,7 +7,7 @@ use teloxide::{prelude::*, types::InlineKeyboardButton, types::InlineKeyboardMar
 use tokio::fs::OpenOptions;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
-use crate::config::key;
+use crate::config::{field, key, suffix};
 
 use anyhow::Result;
 
@@ -37,18 +37,18 @@ pub async fn handle_admin_command(bot: Bot, msg: Message, cmd: AdminCommand) -> 
         match cmd {
             AdminCommand::MakeAdmin => {
                 let _: () = redis_conn
-                    .sadd(user_id.to_string() + ":admin_chats", chat_id.0)
+                    .sadd(format!("{}{}", user_id.to_string(), suffix::ADMIN_CHATS), chat_id.0)
                     .expect("Failed to add chat to admin_chats");
                 
                 let bot_chats: Vec<i64> = redis_conn
-                    .smembers(user_id.to_string() + ":bot_chats")
+                    .smembers(format!("{}{}", user_id.to_string(), suffix::BOT_CHATS))
                     .unwrap_or_else(|_| Vec::new());
 
                 let mut rows: Vec<Vec<InlineKeyboardButton>> = Vec::new();
                 for chat in bot_chats {
                     if chat == chat_id.0 { continue; }
                     let chat_name: String = redis_conn
-                        .hget(format!("{}{}", key::TG_CHATS_PREFIX, chat), "name")
+                        .hget(format!("{}{}", key::TG_CHATS_PREFIX, chat), field::NAME)
                         .expect("Failed to get chat name");
                     rows.push(vec![InlineKeyboardButton::callback(
                         format!("Chat: {}", chat_name),
@@ -85,7 +85,7 @@ pub async fn handle_admin_command(bot: Bot, msg: Message, cmd: AdminCommand) -> 
             }
             AdminCommand::Stats => {
                 let is_admin: bool = redis_conn
-                    .sismember(format!("{}:admin_chats", user_id), chat_id.0)
+                    .sismember(format!("{}{}", user_id, suffix::ADMIN_CHATS), chat_id.0)
                     .expect("Failed to get admin chat");
                 if !is_admin {
                     let stats: HashMap<String, String> = redis_conn
@@ -93,7 +93,7 @@ pub async fn handle_admin_command(bot: Bot, msg: Message, cmd: AdminCommand) -> 
                         .expect("Failed to get chat stats");
                     let mut response = String::new();
                     for (field, value) in stats {
-                        if field == "name" || field == "admin_chat" {
+                        if field == field::NAME || field == field::ADMIN_CHAT {
                             continue;
                         }
                         writeln!(&mut response, "{}: {}", field, value).unwrap();
@@ -106,7 +106,7 @@ pub async fn handle_admin_command(bot: Bot, msg: Message, cmd: AdminCommand) -> 
                     let mut rows: Vec<Vec<InlineKeyboardButton>> = Vec::new();
                     for chat in chats {
                         let chat_name: String = redis_conn
-                            .hget(format!("{}{}", key::TG_CHATS_PREFIX, chat), "name")
+                            .hget(format!("{}{}", key::TG_CHATS_PREFIX, chat), field::NAME)
                             .expect("Failed to get chat name");
                         rows.push(vec![InlineKeyboardButton::callback(
                             format!("Chat: {}", chat_name),
@@ -123,9 +123,9 @@ pub async fn handle_admin_command(bot: Bot, msg: Message, cmd: AdminCommand) -> 
                 }
             }
             AdminCommand::Reputation { user } => {
-                let key = format!("tg:users:{}", user);
+                let key = format!("{}{}", key::TG_USERS_PREFIX, user);
 
-                let user_rep: RedisResult<i64> = redis_conn.hget(key.clone(), "rep");
+                let user_rep: RedisResult<i64> = redis_conn.hget(key.clone(), field::REP);
 
                 match user_rep {
                     Ok(rep) => {

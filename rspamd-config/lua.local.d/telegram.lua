@@ -106,7 +106,8 @@ rspamd_config:register_symbol('TG_BAN', 1.0, function(task)
             end
             rspamd_redis.make_request({task=task, host="127.0.0.1:6379",
                                        cmd='HSET', args={user_key, 'banned', '1'}, callback=banned_cb})
-
+            rspamd_redis.make_request({task=task, host="127.0.0.1:6379",
+                                       cmd='HINCRBY', args={user_key, 'rep', '-5'}, callback=function() end})
             task:insert_result('TG_BAN', 1.0)
         end
     end

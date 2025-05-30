@@ -3,9 +3,8 @@ use std::error::Error;
 use redis::Commands;
 use teloxide::prelude::*;
 use tokio::time;
-use rspamd_telegram_bot::config::{key, suffix};
+use rspamd_telegram_bot::config::{field, key};
 use rspamd_telegram_bot::admin_handlers;
-use rspamd_telegram_bot::handlers;
 
 #[tokio::main]
 async fn main() {
@@ -42,12 +41,12 @@ async fn do_periodic() -> Result<(), Box<dyn Error + Send + Sync>> {
 
     for key in keys {
         let rep: i64 = redis_conn
-            .hget(key.clone(), "rep")
+            .hget(key.clone(), field::REP)
             .expect("Failed to get user's reputation");
 
         if rep > 0 {
             let _: () = redis_conn
-                .hincr(key.clone(), "rep", -1)
+                .hincr(key.clone(), field::REP, -1)
                 .expect("Failed to decrease user's reputation");
         }
     }

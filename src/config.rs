@@ -18,6 +18,8 @@ pub mod suffix {
     pub const ADMIN_CHATS: &str = ":admin_chats";
     /// Suffix for an admin chat’s set of moderated chats (e.g. `"admin:<id>:moderated_chats"`).
     pub const MODERATED_CHATS: &str = ":moderated_chats";
+    /// Suffix for admins of the chat
+    pub const ADMINS: &str = ":admins";
 }
 
 /// **Redis Hash Field Names:** keys within Redis hashes for user/chat properties.
@@ -28,8 +30,6 @@ pub mod field {
     pub const ADMIN_CHAT: &str = "admin_chat";
     /// Field counting spam messages in a chat (spam score count).
     pub const SPAM_COUNT: &str = "spam_count";
-    /// Field counting non-spam (ham) messages in a chat.
-    pub const HAM_COUNT: &str = "ham_count";
     /// Field counting messages deleted by the bot in a chat.
     pub const DELETED: &str = "deleted";
     /// Field tracking a user's reputation score in their hash.
@@ -42,6 +42,8 @@ pub mod field {
     pub const BANNED: &str = "banned";
     /// Field storing the last message content seen (for repeat detection logic).
     pub const LAST_MSG: &str = "last_msg";
+    /// Field storing the username
+    pub const USERNAME: &str = "username";
 }
 
 /// **Rspamd Symbol Names:** spam detection symbols used by Rspamd and the bot.

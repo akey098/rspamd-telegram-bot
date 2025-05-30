@@ -2,7 +2,7 @@ use crate::handlers::scan_msg;
 use redis::Commands;
 use std::error::Error;
 use teloxide::prelude::*;
-use crate::config::key;
+use crate::config::{field, key, symbol};
 
 pub async fn handle_message(
     bot: Bot,
@@ -24,17 +24,17 @@ pub async fn handle_message(
     let chat_id = message.chat.id;
     let key = format!("{}{}", key::TG_CHATS_PREFIX, chat_id);
     let admin_chat_exists: bool = redis_conn
-        .hexists(key.clone(), "admin_chat")
+        .hexists(key.clone(), field::ADMIN_CHAT)
         .expect("Failed to check if admin chat exists");
     let mut admin_chat: Vec<i64> =  Vec::new();
     if admin_chat_exists {
         admin_chat = redis_conn
-            .hget(key.clone(), "admin_chat")
+            .hget(key.clone(), field::ADMIN_CHAT)
             .expect("Failed to get admin chat");
     }
     if scan_result.score >= 10.0
-        || scan_result.symbols.contains_key("TG_FLOOD")
-        || scan_result.symbols.contains_key("TG_SUSPICIOUS")
+        || scan_result.symbols.contains_key(symbol::TG_FLOOD)
+        || scan_result.symbols.contains_key(symbol::TG_SUSPICIOUS)
     {
         println!(
             "Deleting message {} from chat {} because it appears to be spam.",
@@ -42,7 +42,7 @@ pub async fn handle_message(
         );
         bot.delete_message(message.chat.id, message.id).await?;
         let _: () = redis_conn
-            .hincr(key.clone(), "deleted", 1)
+            .hincr(key.clone(), field::DELETED, 1)
             .expect("Failed to update deleted count");
         if admin_chat_exists {
             bot.send_message(

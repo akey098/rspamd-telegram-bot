@@ -12,7 +12,7 @@ use teloxide::{Bot, RequestError};
 use std::fmt::Write;
 use chrono::{Duration, Utc};
 use teloxide::sugar::bot::BotMessagesExt;
-use crate::config::key;
+use crate::config::{field, key, suffix};
 
 pub async fn message_handler(bot: Bot, msg: Message) -> Result<(), RequestError> {
     if let Some(text) = msg.text() {
@@ -20,35 +20,35 @@ pub async fn message_handler(bot: Bot, msg: Message) -> Result<(), RequestError>
         let mut conn = client.get_connection().expect("Failed to connect");
         let key = format!("{}{}", key::TG_USERS_PREFIX, msg.clone().from.unwrap().id.0);
 
-        let user_rep: RedisResult<i64> = conn.hget(&key, "rep");
+        let user_rep: RedisResult<i64> = conn.hget(&key, field::REP);
         
         match user_rep {
             Ok(_) => {}
             Err(_) => {
                 let _: () = conn
-                    .hset(key.clone(), "rep", 0)
+                    .hset(key.clone(), field::REP, 0)
                     .expect("Failed to update user's reputation");
                 let _: () = conn
-                    .hset(key.clone(), "username", msg.clone().from.unwrap().username.unwrap().to_string())
+                    .hset(key.clone(), field::USERNAME, msg.clone().from.unwrap().username.unwrap().to_string())
                     .expect("Failed to update user's reputation");
             }
         }
         
         let user_banned: bool = conn
-            .hexists(key.clone(), "banned")
+            .hexists(key.clone(), field::BANNED)
             .expect("Failed to check user's banned.");
         if user_banned {
             let _ = bot.delete(&msg).await;
+            let ttl: i64 = conn
+                .httl(key.clone(), field::BANNED)
+                .expect("Failed to check user's banned.");
+            let _ = mute_user_for(bot.clone(), msg.clone().chat.id, msg.clone().from.unwrap().id, ttl).await;
         }
         
         if let Ok(cmd) = AdminCommand::parse(text, "rspamd-bot") {
             handle_admin_command(bot.clone(), msg.clone(), cmd).await?;
         } else {
             let _ = handle_message(bot.clone(), msg.clone()).await;
-            let ttl: i64 = conn
-                .httl(key.clone(), "banned")
-                .expect("Failed to check user's banned.");
-            let _ = mute_user_for(bot, msg.chat.id, msg.from.unwrap().id, ttl).await;
         }
     }
     Ok(())
@@ -82,13 +82,13 @@ pub async fn makeadmin_handler(bot: Bot, query: CallbackQuery) -> Result<(), Req
                 let mut redis_conn = redis_client
                     .get_connection()
                     .expect("Failed to get Redis connection");
-                let key = format!("admin:{}:moderated_chats", admin_id);
+                let key = format!("{}{}{}", key::ADMIN_PREFIX, admin_id, suffix::MODERATED_CHATS);
                 let _: () = redis_conn
                     .sadd(key, selected_chat.clone())
                     .expect("Failed to add moderated chat to admin");
                 
                 let _: () = redis_conn
-                    .hset(format!("{}{}", key::TG_CHATS_PREFIX, selected_chat.clone()), "admin_chat", admin_id.0)
+                    .hset(format!("{}{}", key::TG_CHATS_PREFIX, selected_chat.clone()), field::ADMIN_CHAT, admin_id.0)
                     .expect("Failed to add admin chat to selected chat");
 
                 bot.answer_callback_query(query.id)
@@ -116,7 +116,7 @@ pub async fn stats_handler(bot: Bot, query: CallbackQuery) -> Result<(), Request
                     .expect("Failed to get chat stats");
                 let mut response = String::new();
                 for (field, value) in stats {
-                    if field == "name" || field == "admin_chat" {
+                    if field == field::NAME || field == field::ADMIN_CHAT {
                         continue;
                     }
                     writeln!(&mut response, "{}: {}", field, value).unwrap();
@@ -124,7 +124,7 @@ pub async fn stats_handler(bot: Bot, query: CallbackQuery) -> Result<(), Request
                 bot.send_message(admin_id, response).await?;
             } else {
                 let chats: Vec<i64> = redis_conn
-                    .smembers(format!("admin:{}:moderated_chats", admin_id))
+                    .smembers(format!("{}{}{}", key::ADMIN_PREFIX, admin_id, suffix::MODERATED_CHATS))
                     .expect("Failed to get moderated chats");
                 let mut total_stats: HashMap<String, i64> = HashMap::new();
                 for chat in chats {
@@ -133,7 +133,7 @@ pub async fn stats_handler(bot: Bot, query: CallbackQuery) -> Result<(), Request
                         .expect("Failed to get chat stats");
                 
                     for (key, value_str) in chat_stats {
-                        if key == "name" || key == "admin_chat" {
+                        if key == field::NAME || key == field::ADMIN_CHAT {
                             continue;
                         }
                         if let Ok(value) = value_str.parse::<i64>() {
@@ -163,7 +163,7 @@ pub async fn chat_member_handler(
     let client = redis::Client::open("redis://127.0.0.1/").expect("failed to get redis client.");
     let mut conn = client.get_connection().expect("Failed to connect");
     let key = format!("{}{}", key::TG_USERS_PREFIX, update.new_chat_member.user.id.0);
-    let admin_key = format!("{}:bot_chats", update.new_chat_member.user.id);
+    let admin_key = format!("{}{}", update.new_chat_member.user.id, suffix::BOT_CHATS);
 
     match new_status {
         ChatMemberStatus::Member | ChatMemberStatus::Administrator | ChatMemberStatus::Owner => {
@@ -174,10 +174,10 @@ pub async fn chat_member_handler(
                         .expect("Failed to add chat to bot_chats");
                 }
             }
-            let _: () = conn.hset(key.clone(), "rep", 0)
+            let _: () = conn.hset(key.clone(), field::REP, 0)
                 .expect("Failed to set rep");
 
-            let _: () = conn.hset(key.clone(), "username", &username)
+            let _: () = conn.hset(key.clone(), field::USERNAME, &username)
                 .expect("Failed to set username");
         }
         ChatMemberStatus::Left | ChatMemberStatus::Banned | ChatMemberStatus::Restricted => {
@@ -207,14 +207,14 @@ pub async fn my_chat_member_handler(
     let client = redis::Client::open("redis://127.0.0.1/").expect("failed to get redis client.");
     let mut conn = client.get_connection().expect("Failed to connect");
     let chat_id = ChatId(update.chat.id.0);
-    let admins_key = format!("{}:admins", update.chat.id.0);
+    let admins_key = format!("{}{}", update.chat.id.0, suffix::ADMINS);
     let chat_key = format!("{}{}", key::TG_CHATS_PREFIX, update.chat.id.0);
     if update.new_chat_member.status() == ChatMemberStatus::Banned || update.new_chat_member.status() == ChatMemberStatus::Left || update.new_chat_member.status() == ChatMemberStatus::Restricted {
         let admins: Vec<String> = conn
             .smembers(admins_key.clone())
             .expect("failed to get admins of the chat");
         for admin in admins {
-            let admin_key = format!("{}:bot_chats", admin);
+            let admin_key = format!("{}{}", admin, suffix::BOT_CHATS);
             let _: () = conn
                 .srem(admin_key, update.chat.id.0)
                 .expect("Failed to remove admin from bot_chats");
@@ -224,7 +224,7 @@ pub async fn my_chat_member_handler(
             .expect("Failed to delete chat");
     } else {
         let _: () = conn
-            .hset(chat_key, "name", update.chat.title().unwrap())
+            .hset(chat_key, field::NAME, update.chat.title().unwrap())
             .expect("Failed to set up chat key");
         match bot.get_chat_administrators(chat_id).await {
             Ok(admins) => {
