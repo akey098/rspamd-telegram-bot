@@ -34,17 +34,6 @@ pub async fn message_handler(bot: Bot, msg: Message) -> Result<(), RequestError>
             }
         }
         
-        let user_banned: bool = conn
-            .hexists(key.clone(), field::BANNED)
-            .expect("Failed to check user's banned.");
-        if user_banned {
-            let _ = bot.delete(&msg).await;
-            let ttl: i64 = conn
-                .httl(key.clone(), field::BANNED)
-                .expect("Failed to check user's banned.");
-            let _ = mute_user_for(bot.clone(), msg.clone().chat.id, msg.clone().from.unwrap().id, ttl).await;
-        }
-        
         if let Ok(cmd) = AdminCommand::parse(text, "rspamd-bot") {
             handle_admin_command(bot.clone(), msg.clone(), cmd).await?;
         } else {
@@ -54,22 +43,6 @@ pub async fn message_handler(bot: Bot, msg: Message) -> Result<(), RequestError>
     Ok(())
 }
 
-async fn mute_user_for(
-    bot: Bot,
-    chat_id: ChatId,
-    user_id: UserId,
-    seconds: i64,
-) -> anyhow::Result<()> {
-    let until_ts = Utc::now() + Duration::seconds(seconds);
-
-    let perms = ChatPermissions::empty();
-
-    bot.restrict_chat_member(chat_id, user_id, perms)
-        .until_date(until_ts)
-        .await?;
-
-    Ok(())
-}
 
 pub async fn makeadmin_handler(bot: Bot, query: CallbackQuery) -> Result<(), RequestError> {
     if let Some(callback_data) = query.data {
