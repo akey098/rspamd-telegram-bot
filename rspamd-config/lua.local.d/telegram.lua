@@ -8,7 +8,8 @@ local settings = {
     user_prefix = 'tg:users:',
     chat_prefix = 'tg:chats:',
     exp_flood = '60',
-    exp_ban = '3600'
+    exp_ban = '3600',
+    banned_q = 3
 }
 
 rspamd_config:register_symbol('TG_FLOOD', 1.0, function(task)
@@ -108,6 +109,8 @@ rspamd_config:register_symbol('TG_BAN', 1.0, function(task)
                                        cmd='HSET', args={user_key, 'banned', '1'}, callback=banned_cb})
             rspamd_redis.make_request({task=task, host="127.0.0.1:6379",
                                        cmd='HINCRBY', args={user_key, 'rep', '-5'}, callback=function() end})
+            rspamd_redis.make_request({task=task, host="127.0.0.1:6379",
+                                       cmd='HINCRBY', args={user_key, 'banned_q', '1'}, callback=function() end})
             task:insert_result('TG_BAN', 1.0)
         end
     end
@@ -115,7 +118,27 @@ rspamd_config:register_symbol('TG_BAN', 1.0, function(task)
                                cmd='HGET', args={user_key, 'rep'}, callback=ban_cb})
 end)
 
+rspamd_config:register_symbol('TG_PERM_BAN', 1.0, function(task)
+    local user_id = tostring(task:get_header('X-Telegram-User', true) or "")
+    local chat_id = tostring(task:get_header('X-Telegram-Chat', true) or "")
+    if user_id == "" then return false end
+    local user_key = settings.user_prefix .. user_id
+    local function perm_ban_cb (err, data)
+        if err or not data then return end
+        local banned_q = tonumber(data) or 0
+        if banned_q > settings.banned_q then
+            local chat_stats = settings.chat_prefix .. chat_id
+            rspamd_redis.make_request({task=task, host="127.0.0.1:6379",
+                                       cmd='HINCRBY', args={chat_stats, 'perm_banned', '1'}, callback=function() end})
+            task:insert_result('TG_PERM_BAN', 1.0)
+        end
+    end
+    rspamd_redis.make_request({task=task, host="127.0.0.1:6379",
+                               cmd='HGET', args={user_key, 'banned_q'}, callback=perm_ban_cb})
+end)
+
 rspamd_config:set_metric_symbol('TG_FLOOD', 1.2, 'User is flooding')
 rspamd_config:set_metric_symbol('TG_REPEAT', 2.0, 'User have send a lot of equal messages')
 rspamd_config:set_metric_symbol('TG_SUSPICIOUS', 5.0, 'Suspicious activity')
 rspamd_config:set_metric_symbol('TG_BAN', 10.0, 'Banned for some time')
+rspamd_config:set_metric_symbol('TG_PERM_BAN', 15.0, 'Permanently banned')
