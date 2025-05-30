@@ -42,8 +42,10 @@ pub mod field {
     pub const BANNED: &str = "banned";
     /// Field storing the last message content seen (for repeat detection logic).
     pub const LAST_MSG: &str = "last_msg";
-    /// Field storing the username
+    /// Field storing the username of the sender
     pub const USERNAME: &str = "username";
+    /// Field storing the quantity of times user have been banned for the time
+    pub const BANNED_Q: &str = "banned_q";
 }
 
 /// **Rspamd Symbol Names:** spam detection symbols used by Rspamd and the bot.
