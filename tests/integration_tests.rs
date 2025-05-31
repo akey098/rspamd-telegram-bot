@@ -18,6 +18,7 @@ use teloxide::types::{Chat, ChatId, ChatKind, ChatPrivate, MediaKind, MediaText,
 use teloxide::Bot;
 use once_cell::sync::Lazy;
 use std::{collections::HashMap, fs, io, path::Path};
+use std::path::PathBuf;
 
 // 1. Define a struct matching your .conf keys:
 #[derive(Debug)]
@@ -30,6 +31,7 @@ pub struct TelegramConfig {
     pub chat_prefix: String,
     pub exp_flood: u64,
     pub exp_ban:   u64,
+    pub banned_q:   u64,
 }
 
 impl TelegramConfig {
@@ -69,6 +71,7 @@ impl TelegramConfig {
             chat_prefix: map.get("chat_prefix").cloned().unwrap_or_default(),
             exp_flood:  map.get("exp_flood") .and_then(|v| v.parse().ok()).unwrap_or_default(),
             exp_ban:    map.get("exp_ban")   .and_then(|v| v.parse().ok()).unwrap_or_default(),
+            banned_q:    map.get("banned_q")   .and_then(|v| v.parse().ok()).unwrap_or_default(),
         })
     }
 }
@@ -291,6 +294,68 @@ async fn tg_suspicious_sets_symbol() {
 }
 
 #[tokio::test]
+async fn tg_ban_sets_symbol_and_updates_ban_state() {
+    flush_redis();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let chat_id: i64 = 4004;
+    let user_id: u64 = 777;
+    let user_key = format!("{}{}", key::TG_USERS_PREFIX, user_id);
+    let chat_key = format!("{}{}", key::TG_CHATS_PREFIX, chat_id);
+
+    let client = redis::Client::open("redis://127.0.0.1/").unwrap();
+    let mut conn = client.get_connection().unwrap();
+    let _: () = conn.hset(user_key.clone(), field::REP, CONFIG.ban + 1).expect("Failed to set rep");
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let reply = scan_msg(
+        make_message(chat_id, user_id, "tester", "Test message", 1),
+        "Test message".into()
+    ).await.ok().unwrap();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    assert!(reply.symbols.contains_key(symbol::TG_BAN), "Expected TG_BAN symbol for high-rep user");
+    let new_rep: i64 = conn.hget(user_key.clone(), field::REP).expect("Failed to get rep");
+    assert_eq!(new_rep, (CONFIG.ban + 1) as i64 - 4, "Rep should decrease by 5 on TG_BAN"); // TG_SUSPICIOUS updates rep on message
+    let banned_flag: i64 = conn.hget(user_key.clone(), field::BANNED).expect("Failed to get 'banned' field");
+    assert_eq!(banned_flag, 1, "User 'banned' flag should be set");
+    let ban_count: i64 = conn.hget(user_key.clone(), "banned_q").expect("Failed to get 'banned_q'");
+    assert_eq!(ban_count, 1, "User ban count should increment");
+    let chat_bans: i64 = conn.hget(chat_key.clone(), field::BANNED).expect("Failed to get chat banned count");
+    assert_eq!(chat_bans, 1, "Chat's banned count should increment by 1");
+}
+
+#[tokio::test]
+async fn tg_perm_ban_sets_symbol_and_updates_perm_ban_count() {
+    flush_redis();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let chat_id: i64 = 5005;
+    let user_id: u64 = 888;
+    let user_key = format!("{}{}", key::TG_USERS_PREFIX, user_id);
+    let chat_key = format!("{}{}", key::TG_CHATS_PREFIX, chat_id);
+
+    let client = redis::Client::open("redis://127.0.0.1/").unwrap();
+    let mut conn = client.get_connection().unwrap();
+    let _: () = conn.hset(user_key.clone(), field::BANNED_Q, CONFIG.banned_q + 1).expect("Failed to set banned_q");
+    let _: () = conn.hset(user_key.clone(), field::REP, 0).expect("Failed to set rep");
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let reply = scan_msg(
+        make_message(chat_id, user_id, "tester", "Another message", 1),
+        "Another message".into()
+    ).await.ok().unwrap();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    assert!(reply.symbols.contains_key(symbol::TG_PERM_BAN), "Expected TG_PERM_BAN symbol for frequent offender");
+    assert!(!reply.symbols.contains_key(symbol::TG_BAN), "TG_BAN should not be present when only perm ban triggers");
+    let perm_bans: i64 = conn.hget(chat_key.clone(), "perm_banned").expect("Failed to get perm_banned count");
+    assert_eq!(perm_bans, 1, "Chat's permanent ban count should increment by 1");
+    let final_ban_count: i64 = conn.hget(user_key.clone(), field::BANNED_Q).expect("Failed to get 'banned_q'");
+    assert_eq!(final_ban_count, 4, "User banned_q should remain at 4 (perm ban triggered)");
+}
+
+#[tokio::test]
 async fn makeadmin_adds_admin_chat_and_generates_keyboard() {
     flush_redis();
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -393,21 +458,15 @@ async fn stats_command_shows_chat_stats_or_list() {
     assert_eq!(name2, "GroupChat2");
 }
 
-/*
 #[tokio::test]
 async fn addregex_command_parses_and_writes_rule() {
-    // 1) Set up a writable temp folder & point handler at it
-    let mut tmp = std::env::temp_dir();
-    tmp.push("rspamd-test");
-    std::fs::create_dir_all(&tmp).unwrap();
-    unsafe { std::env::set_var("RSPAMD_REGEX_DIR", &tmp); }
-
     flush_redis();
     tokio::time::sleep(Duration::from_millis(50)).await;
 
     let symbol = "TESTSYM";
-    let file_path = tmp.join(format!("telegram_regex_{}.lua", symbol));
-    let _ = std::fs::remove_file(&file_path);
+    
+    let file_path = PathBuf::from(format!("/etc/rspamd/lua.local.d/telegram_regex_{}.lua", symbol));
+    let _ = fs::remove_file(&file_path);
 
     let bot = Bot::new("DUMMY");
 
@@ -424,12 +483,11 @@ async fn addregex_command_parses_and_writes_rule() {
     // now the file should exist
     assert!(file_path.exists(), "File should be created for valid input");
 
-    let contents = std::fs::read_to_string(&file_path).unwrap();
+    let contents = fs::read_to_string(&file_path).unwrap();
     assert!(contents.contains(&format!("config['regexp']['{}']", symbol)));
     assert!(contents.contains("re = '[0-9]+'"));
     assert!(contents.contains("score = 5"));
 
     // cleanup
-    let _ = std::fs::remove_file(&file_path);
+    let _ = fs::remove_file(&file_path);
 }
-*/
