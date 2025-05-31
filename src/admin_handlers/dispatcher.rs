@@ -4,14 +4,12 @@ use crate::handlers::handle_message;
 use redis::{Commands, RedisResult};
 use teloxide::dispatching::{Dispatcher, UpdateFilterExt};
 use teloxide::dptree;
-use teloxide::payloads::{AnswerCallbackQuerySetters, RestrictChatMemberSetters};
-use teloxide::prelude::{CallbackQuery, ChatId, ChatMemberUpdated, Message, Requester, Update, UserId};
-use teloxide::types::{BotCommand, ChatKind, ChatMemberStatus, ChatPermissions};
+use teloxide::payloads::{AnswerCallbackQuerySetters};
+use teloxide::prelude::{CallbackQuery, ChatId, ChatMemberUpdated, Message, Requester, Update};
+use teloxide::types::{BotCommand, ChatKind, ChatMemberStatus};
 use teloxide::utils::command::BotCommands;
 use teloxide::{Bot, RequestError};
 use std::fmt::Write;
-use chrono::{Duration, Utc};
-use teloxide::sugar::bot::BotMessagesExt;
 use crate::config::{field, key, suffix};
 
 pub async fn message_handler(bot: Bot, msg: Message) -> Result<(), RequestError> {
