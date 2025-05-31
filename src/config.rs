@@ -46,6 +46,8 @@ pub mod field {
     pub const USERNAME: &str = "username";
     /// Field storing the quantity of times user have been banned for the time
     pub const BANNED_Q: &str = "banned_q";
+    /// Field storing the quantity of permanently banned users in the chat
+    pub const PERM_BANNED: &str = "perm_banned";
 }
 
 /// **Rspamd Symbol Names:** spam detection symbols used by Rspamd and the bot.
