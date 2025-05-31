@@ -160,7 +160,7 @@ pub async fn handle_admin_command(bot: Bot, msg: Message, cmd: AdminCommand) -> 
                     symbol, regex_pattern, score
                 );
                 
-                let path = format!("/var/lib/rspamd-bot/telegram_regex_{}.lua", symbol);
+                let path = format!("/etc/rspamd/lua.local.d/telegram_regex_{}.lua", symbol);
                 
                 let mut file = match OpenOptions::new().create(true).append(true).open(&path).await {
                     Ok(f) => f,
