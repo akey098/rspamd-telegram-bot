@@ -48,6 +48,11 @@ jobs:
             sleep 1
           done
 
+      - name: Ensure /etc/rspamd/lua.local.d is writable
+        run: |
+          sudo mkdir -p /etc/rspamd/lua.local.d
+          sudo chmod 777 /etc/rspamd/lua.local.d
+
       - name: Build project
         run: cargo build --verbose
 
