@@ -76,12 +76,10 @@ pub async fn handle_admin_command(bot: Bot, msg: Message, cmd: AdminCommand) -> 
                 .await?;
             }
             AdminCommand::Enable { feature } => {
-                bot.send_message(chat_id, format!("Feature '{}' enabled.", feature))
-                    .await?;
+                
             }
             AdminCommand::Disable { feature } => {
-                bot.send_message(chat_id, format!("Feature '{}' disabled.", feature))
-                    .await?;
+                
             }
             AdminCommand::Stats => {
                 let is_admin: bool = redis_conn
@@ -181,6 +179,12 @@ pub async fn handle_admin_command(bot: Bot, msg: Message, cmd: AdminCommand) -> 
                     "Added regex pattern: '{}' with symbol '{}' and score {}.\nPlease reload Rspamd to apply the rule.",
                     regex_pattern, symbol, score
                 )).await?;
+            }
+            AdminCommand::Whitelist { username} => {
+                
+            }
+            AdminCommand::Blacklist { username } => {
+                
             }
         }
     } else {
