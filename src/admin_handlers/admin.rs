@@ -180,10 +180,10 @@ pub async fn handle_admin_command(bot: Bot, msg: Message, cmd: AdminCommand) -> 
                     regex_pattern, symbol, score
                 )).await?;
             }
-            AdminCommand::Whitelist { username} => {
+            AdminCommand::Whitelist { pattern } => {
                 
             }
-            AdminCommand::Blacklist { username } => {
+            AdminCommand::Blacklist { pattern } => {
                 
             }
         }

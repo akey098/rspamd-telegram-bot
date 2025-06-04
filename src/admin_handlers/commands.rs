@@ -17,8 +17,8 @@ pub enum AdminCommand {
     AddRegex { pattern: String },
     #[command(description = "make this chat admin-chat.")]
     MakeAdmin,
-    #[command(description = "show whitelist or add person to whitelist.")]
-    Whitelist { username: String },
-    #[command(description = "show blacklist or add person to blacklist.")]
-    Blacklist { username: String },
+    #[command(description = "show whitelist of users/words or add user/word to whitelist.")]
+    Whitelist { pattern: String },
+    #[command(description = "show blacklist of users/words or add user/word to blacklist.")]
+    Blacklist { pattern: String },
 }
