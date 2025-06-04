@@ -8,6 +8,14 @@ pub mod key {
     pub const TG_CHATS_PREFIX: &str = "tg:chats:";
     /// Prefix for admin chat keys (for storing moderated chats, e.g. `"admin:<admin_chat_id>:..."`).
     pub const ADMIN_PREFIX: &str = "admin:";
+    /// Key for whitelist of users
+    pub const TG_WHITELIST_USER_KEY: &str = "tg:whitelist:users";
+    /// Key for blacklist of users
+    pub const TG_BLACKLIST_USER_KEY: &str = "tg:blacklist:users";
+    /// Key for whitelist of words
+    pub const TG_WHITELIST_WORD_KEY: &str = "tg:whitelist:words";
+    /// Key for blacklist of words
+    pub const TG_BLACKLIST_WORD_KEY: &str = "tg:blacklist:words";
 }
 
 /// **Redis Key Suffixes:** common endings for composite Redis keys.
@@ -62,4 +70,12 @@ pub mod symbol {
     pub const TG_BAN: &str = "TG_BAN";
     /// Symbol for permanently banned user (`TG_PERM_BAN`)
     pub const TG_PERM_BAN: &str = "TG_PERM_BAN";
+    /// Symbol for whitelist of users
+    pub const WHITELIST_USER: &str = "WHITELIST_USER";
+    /// Symbol for blacklist of users
+    pub const BLACKLIST_USER: &str = "BLACKLIST_USER";
+    /// Symbol for whitelist of words
+    pub const WHITELIST_WORD: &str = "WHITELIST_WORD";
+    /// Symbol for blacklist of words
+    pub const BLACKLIST_WORD: &str = "BLACKLIST_WORD";
 }
