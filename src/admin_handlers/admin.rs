@@ -476,13 +476,6 @@ pub async fn handle_admin_command(bot: Bot, msg: Message, cmd: AdminCommand) -> 
                     }
                 }
             }
-            _ => {
-                bot.send_message(
-                    chat_id,
-                    "First part must be `user` or `word`. Usage: /blacklist <user|word>|<*|specific>",
-                )
-                    .await?;
-            }
         }
     } else {
         bot.send_message(chat_id, "You are not admin").await?;
