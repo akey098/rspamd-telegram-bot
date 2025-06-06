@@ -4,13 +4,13 @@ use crate::handlers::handle_message;
 use redis::{Commands, RedisResult};
 use teloxide::dispatching::{Dispatcher, UpdateFilterExt};
 use teloxide::dptree;
-use teloxide::payloads::{AnswerCallbackQuerySetters};
+use teloxide::payloads::{AnswerCallbackQuerySetters, SendMessageSetters};
 use teloxide::prelude::{CallbackQuery, ChatId, ChatMemberUpdated, Message, Requester, Update};
-use teloxide::types::{BotCommand, ChatKind, ChatMemberStatus};
+use teloxide::types::{BotCommand, ChatKind, ChatMemberStatus, InlineKeyboardButton, InlineKeyboardMarkup};
 use teloxide::utils::command::BotCommands;
 use teloxide::{Bot, RequestError};
 use std::fmt::Write;
-use crate::config::{field, key, suffix};
+use crate::config::{field, key, suffix, AVAILABLE_FEATURES};
 
 pub async fn message_handler(bot: Bot, msg: Message) -> Result<(), RequestError> {
     if let Some(text) = msg.text() {
@@ -118,6 +118,173 @@ pub async fn stats_handler(bot: Bot, query: CallbackQuery) -> Result<(), Request
                 }
                 bot.send_message(admin_id, resp).await?;
             }
+        }
+    }
+    Ok(())
+}
+
+
+/// 1) Called when callback_data starts with "managefeat:"
+/// i.e. admin clicked “Chat: XYZ”
+/// We now show a second inline keyboard listing each feature for that chat,
+/// along with a “Discard” button.
+pub async fn manage_features_select_chat(
+    bot: Bot,
+    query: CallbackQuery,
+) -> Result<(), RequestError> {
+    // Make sure there is callback data and a message
+    if let Some(data) = query.data {
+        if let Some(callback_msg) = query.message {
+            // Acknowledge the callback (so Telegram's “loading” spinner stops)
+            let _ = bot
+                .answer_callback_query(query.id.clone())
+                .text("Fetching features…")
+                .await;
+
+            // Extract chat_id that the admin clicked
+            // format is "managefeat:<chat_id>"
+            let chat_id_raw = &data["managefeat:".len()..];
+            if let Ok(target_chat_id) = chat_id_raw.parse::<i64>() {
+                let redis_client =
+                    redis::Client::open("redis://127.0.0.1/").expect("Failed to connect to Redis");
+                let mut redis_conn = redis_client
+                    .get_connection()
+                    .expect("Failed to get Redis connection");
+
+                let chat_key = format!("{}{}", key::TG_CHATS_PREFIX, target_chat_id);
+                let mut rows: Vec<Vec<InlineKeyboardButton>> = Vec::new();
+
+                for feat in AVAILABLE_FEATURES {
+                    let field_name = format!("feat:{}", feat);
+                    // If the field exists and equals "1", we consider it enabled.
+                    let is_enabled: bool = redis_conn
+                        .hget::<_, _, Option<String>>(chat_key.clone(), field_name.clone())
+                        .unwrap_or(None)
+                        .map(|v| v == "1")
+                        .unwrap_or(false);
+
+                    // Decide button text and callback_data:
+                    if is_enabled {
+                        // If currently enabled → we want a “Disable” button
+                        rows.push(vec![InlineKeyboardButton::callback(
+                            format!("Disable `{}`", feat),
+                            format!("togglefeat:{}|{}", target_chat_id, feat),
+                        )]);
+                    } else {
+                        // If currently disabled → we want an “Enable” button
+                        rows.push(vec![InlineKeyboardButton::callback(
+                            format!("Enable `{}`", feat),
+                            format!("togglefeat:{}|{}", target_chat_id, feat),
+                        )]);
+                    }
+                }
+
+                // 3) Finally, add one more row with “Discard” to just delete the message
+                rows.push(vec![InlineKeyboardButton::callback(
+                    "Discard".to_string(),
+                    format!("discard:{}", target_chat_id),
+                )]);
+
+                let keyboard = InlineKeyboardMarkup::new(rows);
+
+                // 4) Instead of sending a brand‐new message, we can edit the old one OR simply send
+                //    a new message. To keep things simple, we’ll delete the old inline‐keyboard message,
+                //    then send a new one. (Either approach is fine; Telegram will let you delete it.)
+                let old_chat = callback_msg.chat().id;
+                let old_msg_id = callback_msg.id();
+                let _ = bot.delete_message(old_chat, old_msg_id).await;
+
+                bot.send_message(old_chat, "Select a feature to toggle:")
+                    .reply_markup(keyboard)
+                    .await?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// 2) Called when callback_data starts with "togglefeat:"
+/// That means “toggle feature <feat> for chat <chat_id>”
+/// We flip the HSET/HDEL in Redis, then delete the inline‐keyboard message
+pub async fn toggle_feature_handler(
+    bot: Bot,
+    query: CallbackQuery,
+) -> Result<(), RequestError> {
+    if let Some(data) = query.data {
+        if let Some(callback_msg) = query.message {
+            // Acknowledge quickly
+            let _ = bot
+                .answer_callback_query(query.id.clone())
+                .await;
+
+            // data = "togglefeat:<chat_id>|<feat_name>"
+            let rest = &data["togglefeat:".len()..];
+            // rest = "<chat_id>|<feat_name>"
+            if let Some((chat_id_raw, feat_name)) = rest.split_once('|') {
+                if let Ok(target_chat_id) = chat_id_raw.parse::<i64>() {
+                    let redis_client =
+                        redis::Client::open("redis://127.0.0.1/").expect("Failed to connect to Redis");
+                    let mut redis_conn = redis_client
+                        .get_connection()
+                        .expect("Failed to get Redis connection");
+                    let chat_key = format!("{}{}", key::TG_CHATS_PREFIX, target_chat_id);
+                    let field_name = format!("feat:{}", feat_name);
+
+                    // Check current state
+                    let currently_on: bool = redis_conn
+                        .hget::<_, _, Option<String>>(chat_key.clone(), field_name.clone())
+                        .unwrap_or(None)
+                        .map(|v| v == "1")
+                        .unwrap_or(false);
+
+                    if currently_on {
+                        // It was on → remove it (disable)
+                        let _:() = redis_conn.hdel(chat_key.clone(), field_name.clone()).expect("Failed to delete feature");
+                        // Optionally send ephemeral feedback:
+                        let _ = bot
+                            .send_message(
+                                callback_msg.chat().id,
+                                format!("Feature `{}` disabled for chat {}", feat_name, target_chat_id),
+                            )
+                            .await;
+                    } else {
+                        // It was off → set it to "1" (enable)
+                        let _:() = redis_conn.hset(chat_key.clone(), field_name.clone(), "1").expect("Failed to set feature");
+                        let _ = bot
+                            .send_message(
+                                callback_msg.chat().id,
+                                format!("Feature `{}` enabled for chat {}", feat_name, target_chat_id),
+                            )
+                            .await;
+                    }
+
+                    // Finally, delete the inline‐keyboard message itself
+                    let old_chat = callback_msg.chat().id;
+                    let old_msg_id = callback_msg.id();
+                    let _ = bot.delete_message(old_chat, old_msg_id).await;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// 3) Called when callback_data starts with "discard:"
+/// We simply delete the inline‐keyboard message, without changes
+pub async fn discard_handler(
+    bot: Bot,
+    query: CallbackQuery,
+) -> Result<(), RequestError> {
+    if let Some(_data) = query.data {
+        if let Some(callback_msg) = query.message {
+            // Acknowledge
+            let _ = bot.answer_callback_query(query.id.clone()).await;
+
+            // data = "discard:<chat_id>", but we don’t actually need the chat_id here.
+            // We just delete the message containing the inline keyboard:
+            let old_chat = callback_msg.chat().id;
+            let old_msg_id = callback_msg.id();
+            let _ = bot.delete_message(old_chat, old_msg_id).await;
         }
     }
     Ok(())
@@ -243,6 +410,39 @@ pub async fn run_dispatcher(bot: Bot) {
                     q.data.as_deref().map(|s| s.starts_with("stats:")).unwrap_or(false)
                 })
                 .endpoint(stats_handler),
+        )
+        .branch(
+            // When admin chooses a chat to manage features:
+            Update::filter_callback_query()
+                .filter(|q: &CallbackQuery| {
+                    q.data
+                        .as_deref()
+                        .map(|s| s.starts_with("managefeat:"))
+                        .unwrap_or(false)
+                })
+                .endpoint(manage_features_select_chat),
+        )
+        .branch(
+            // When admin toggles a single feature on/off:
+            Update::filter_callback_query()
+                .filter(|q: &CallbackQuery| {
+                    q.data
+                        .as_deref()
+                        .map(|s| s.starts_with("togglefeat:"))
+                        .unwrap_or(false)
+                })
+                .endpoint(toggle_feature_handler),
+        )
+        .branch(
+            // When admin discards:
+            Update::filter_callback_query()
+                .filter(|q: &CallbackQuery| {
+                    q.data
+                        .as_deref()
+                        .map(|s| s.starts_with("discard:"))
+                        .unwrap_or(false)
+                })
+                .endpoint(discard_handler),
         )
         .branch(Update::filter_chat_member().endpoint(chat_member_handler))
         .branch(Update::filter_my_chat_member().endpoint(my_chat_member_handler));

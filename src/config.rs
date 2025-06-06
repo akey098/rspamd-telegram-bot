@@ -79,3 +79,10 @@ pub mod symbol {
     /// Symbol for blacklist of words
     pub const BLACKLIST_WORD: &str = "BLACKLIST_WORD";
 }
+
+pub const AVAILABLE_FEATURES: &[&str] = &[
+    "flood",
+    "repeat",
+    "whitelist",
+    "blacklist",
+];

@@ -261,11 +261,42 @@ pub async fn handle_admin_command(bot: Bot, msg: Message, cmd: AdminCommand) -> 
                     /blacklist <user|word>|<add|find>|<target>",
                 ).await?;
             }
-            AdminCommand::Enable { feature } => {
-                
-            }
-            AdminCommand::Disable { feature } => {
-                
+            AdminCommand::ManageFeatures => {
+                let redis_client =
+                    redis::Client::open("redis://127.0.0.1/").expect("Failed to connect to Redis");
+                let mut redis_conn = redis_client
+                    .get_connection()
+                    .expect("Failed to get Redis connection");
+
+                let key_moderated =
+                    format!("{}{}{}", key::ADMIN_PREFIX, chat_id.0, suffix::MODERATED_CHATS);
+                let moderated_chats: Vec<i64> =
+                    redis_conn.smembers(key_moderated).unwrap_or_else(|_| Vec::new());
+
+                // 2) Build one row-per-chat button: callback_data = "managefeat:<chat_id>"
+                let mut rows: Vec<Vec<InlineKeyboardButton>> = Vec::new();
+                for chat in moderated_chats.into_iter() {
+                    // You might want to fetch the chat's stored name for labeling:
+                    let chat_name: String = redis_conn
+                        .hget(format!("{}{}", key::TG_CHATS_PREFIX, chat), field::NAME)
+                        .unwrap_or_else(|_| chat.to_string());
+                    rows.push(vec![
+                        InlineKeyboardButton::callback(
+                            format!("Chat: {}", chat_name),
+                            format!("managefeat:{}", chat),
+                        ),
+                    ]);
+                }
+                // If the admin has no moderated chats, send a simple message instead:
+                if rows.is_empty() {
+                    bot.send_message(chat_id, "You do not moderate any chats yet.")
+                        .await?;
+                } else {
+                    let keyboard = InlineKeyboardMarkup::new(rows);
+                    bot.send_message(chat_id, "Select a chat to manage features:")
+                        .reply_markup(keyboard)
+                        .await?;
+                }
             }
             AdminCommand::Stats => {
                 let is_admin: bool = redis_conn

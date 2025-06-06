@@ -5,10 +5,6 @@ use teloxide::{utils::command::BotCommands};
 pub enum AdminCommand {
     #[command(description = "show help.")]
     Help,
-    #[command(description = "enable a feature.")]
-    Enable { feature: String },
-    #[command(description = "disable a feature.")]
-    Disable { feature: String },
     #[command(description = "show spam stats.")]
     Stats,
     #[command(description = "show user reputation.")]
@@ -21,4 +17,6 @@ pub enum AdminCommand {
     Whitelist { pattern: String },
     #[command(description = "show blacklist of users/words or add user/word to blacklist.")]
     Blacklist { pattern: String },
+    #[command(description = "Start managing features (callback flow)")]
+    ManageFeatures,
 }
