@@ -10,6 +10,7 @@ use tokio::process::Command;
 use crate::config::{field, key, suffix};
 
 use anyhow::Result;
+use regex::Regex;
 
 async fn is_user_admin(bot: &Bot, chat: Chat, user_id: UserId) -> anyhow::Result<bool> {
     if !chat.is_private() {
@@ -23,6 +24,189 @@ async fn is_user_admin(bot: &Bot, chat: Chat, user_id: UserId) -> anyhow::Result
         Ok(true)
     }
 }
+
+/// Shared helper for both whitelist and blacklist logic.
+///
+/// - `bot` / `chat_id`: for sending replies.
+/// - `redis_conn`: mutable connection to Redis.
+/// - `redis_key`: the exact SET key (e.g. `key::TG_WHITELIST_USER_KEY`).
+/// - `item_kind`: `"user"` or `"word"` (used in reply text).
+/// - `list_name`: `"whitelist"` or `"blacklist"` (used in reply text).
+/// - `action`: must be `"add"` or `"find"`.
+/// - `target`: the third part of the pattern. If `action=="add"`, it must not be `"*"`.
+///             If `action=="find"`, it can be `"*"`, a plain literal, or a Rust‐regex.
+///
+/// This sends the appropriate reply and returns `Ok(())`.
+async fn process_set(
+    bot: &Bot,
+    chat_id: ChatId,
+    redis_conn: &mut redis::Connection,
+    redis_key: &str,
+    item_kind: &str,  // "user" or "word"
+    list_name: &str,  // "whitelist" or "blacklist"
+    action: &str,     // "add" or "find"
+    target: &str,     // third part of the pattern
+) -> ResponseResult<()> {
+    match action {
+        // ────────────────────────────────────────────────────────────────────
+        "add" => {
+            // You cannot do “add|*”. Must specify exactly one literal (user_id or word).
+            if target == "*" {
+                bot.send_message(
+                    chat_id,
+                    format!(
+                        "Cannot use `*` with `add`. You must specify exactly one {} to add.",
+                        item_kind
+                    ),
+                )
+                    .await?;
+            } else {
+                // Straight SADD
+                let rv: RedisResult<()> = redis_conn.sadd(redis_key, target);
+                match rv {
+                    Ok(()) => {
+                        bot.send_message(
+                            chat_id,
+                            format!("Added {} `{}` to the {}.", item_kind, target, list_name),
+                        )
+                            .await?;
+                    }
+                    Err(e) => {
+                        bot.send_message(
+                            chat_id,
+                            format!("Failed to add {} to {}: {}", item_kind, target, e),
+                        )
+                            .await?;
+                    }
+                }
+            }
+        }
+
+        // ────────────────────────────────────────────────────────────────────
+        "find" => {
+            // 1) If target == "*", list all members via SMEMBERS.
+            if target == "*" {
+                let all_items: Vec<String> =
+                    redis_conn.smembers(redis_key).unwrap_or_else(|_| Vec::new());
+                if all_items.is_empty() {
+                    bot.send_message(chat_id, format!("(no {}ed {}s)", list_name, item_kind))
+                        .await?;
+                } else {
+                    let joined = all_items.join(", ");
+                    bot.send_message(
+                        chat_id,
+                        format!("{}ed {}s: {}",
+                                // Capitalize first letter of list_name for nicer output
+                                {
+                                    let mut s = list_name.to_owned();
+                                    s.get_mut(0..1).map(|c| c.make_ascii_uppercase());
+                                    s
+                                },
+                                item_kind,
+                                joined,
+                        ),
+                    )
+                        .await?;
+                }
+                return Ok(());
+            }
+
+            // 2) If no regex meta‐characters, treat target as a plain literal → SISMEMBER
+            let is_plain_literal = !target.chars().any(|c| {
+                matches!(
+                    c,
+                    '.' | '^' | '$' | '*' | '+' | '?' | '(' | ')' | '[' | ']' | '{' | '}' | '|' | '\\'
+                )
+            });
+
+            if is_plain_literal {
+                let exists: bool = redis_conn.sismember(redis_key, target).unwrap_or(false);
+                if exists {
+                    bot.send_message(
+                        chat_id,
+                        format!(
+                            "{} `{}` is in the {}.",
+                            item_kind, target, list_name
+                        ),
+                    )
+                        .await?;
+                } else {
+                    bot.send_message(
+                        chat_id,
+                        format!(
+                            "{} `{}` is NOT in the {}.",
+                            item_kind, target, list_name
+                        ),
+                    )
+                        .await?;
+                }
+            } else {
+                // 3) Regex case: attempt to compile `target` as a Rust regex,
+                // then SMEMBERS and filter in Rust.
+                let pattern = match Regex::new(target) {
+                    Ok(rgx) => rgx,
+                    Err(e) => {
+                        bot.send_message(
+                            chat_id,
+                            format!("Invalid regex `{}`: {}", target, e),
+                        )
+                            .await?;
+                        return Ok(());
+                    }
+                };
+
+                let all_items: Vec<String> =
+                    redis_conn.smembers(redis_key).unwrap_or_else(|_| Vec::new());
+                let mut matches = Vec::new();
+                for item in all_items.iter() {
+                    if pattern.is_match(item) {
+                        matches.push(item.clone());
+                    }
+                }
+
+                if matches.is_empty() {
+                    bot.send_message(
+                        chat_id,
+                        format!(
+                            "No {}ed {}s match `/ {}`.",
+                            list_name, item_kind, target
+                        ),
+                    )
+                        .await?;
+                } else {
+                    let joined = matches.join(", ");
+                    bot.send_message(
+                        chat_id,
+                        format!(
+                            "{}s matching `/ {}`: {}",
+                            // Capitalize list_name for output
+                            {
+                                let mut s = list_name.to_owned();
+                                s.get_mut(0..1).map(|c| c.make_ascii_uppercase());
+                                s
+                            },
+                            target,
+                            joined
+                        ),
+                    )
+                        .await?;
+                }
+            }
+        }
+
+        _ => {
+            // Should never happen if the caller only passes "add" or "find"
+            bot.send_message(
+                chat_id,
+                format!("Invalid action `{}`. Must be `add` or `find`.", action),
+            )
+                .await?;
+        }
+    }
+
+    Ok(())
+}
+
 pub async fn handle_admin_command(bot: Bot, msg: Message, cmd: AdminCommand) -> ResponseResult<()> {
     let redis_client =
         redis::Client::open("redis://127.0.0.1/").expect("Failed to connect to Redis");
@@ -67,13 +251,15 @@ pub async fn handle_admin_command(bot: Bot, msg: Message, cmd: AdminCommand) -> 
             AdminCommand::Help => {
                 bot.send_message(
                     chat_id,
-                    "Commands:\n/help - show help for commands\
-                    \n/makeadmin - register current chat as admin control chat\n\
-                    /reputation <username> - show user's reputation\n\
-                    /addregex <symbol|pattern|score> - add regex rule to the rspamd\n\
-                    /stats - show stats",
-                )
-                .await?;
+                    "Commands:\n\
+                    /help – show help for commands\n\
+                    /makeadmin – register current chat as admin control chat\n\
+                    /reputation <username> – show user’s reputation\n\
+                    /addregex <symbol|pattern|score> – add regex rule to rspamd\n\
+                    /stats – show stats\n\
+                    /whitelist <user|word>|<add|find>|<target>\n\
+                    /blacklist <user|word>|<add|find>|<target>",
+                ).await?;
             }
             AdminCommand::Enable { feature } => {
                 
@@ -181,10 +367,121 @@ pub async fn handle_admin_command(bot: Bot, msg: Message, cmd: AdminCommand) -> 
                 )).await?;
             }
             AdminCommand::Whitelist { pattern } => {
-                
+                // Now expect exactly 3 parts: kind|action|target
+                let parts: Vec<&str> = pattern.split('|').map(str::trim).collect();
+                if parts.len() != 3 {
+                    bot.send_message(
+                        chat_id,
+                        "Usage: /whitelist <user|word>|<add|find>|<target>\n\
+                     - If add: target must be the literal user_id or word.\n\
+                     - If find: target can be '*' (list all),\n\
+                       or a plain string (SISMEMBER),\n\
+                       or a Rust‐regex (full regex syntax).",
+                    )
+                        .await?;
+                    return Ok(());
+                }
+
+                let (kind, action, target) = (parts[0], parts[1], parts[2]);
+
+                // Dispatch to the shared helper with the correct Redis key
+                match kind {
+                    "user" => {
+                        process_set(
+                            &bot,
+                            chat_id,
+                            &mut redis_conn,
+                            key::TG_WHITELIST_USER_KEY,
+                            "user",
+                            "whitelist",
+                            action,
+                            target,
+                        )
+                            .await?;
+                    }
+                    "word" => {
+                        process_set(
+                            &bot,
+                            chat_id,
+                            &mut redis_conn,
+                            key::TG_WHITELIST_WORD_KEY,
+                            "word",
+                            "whitelist",
+                            action,
+                            target,
+                        )
+                            .await?;
+                    }
+                    _ => {
+                        bot.send_message(
+                            chat_id,
+                            "First part must be `user` or `word`. Usage: /whitelist <user|word>|<add|find>|<target>",
+                        )
+                            .await?;
+                    }
+                }
             }
+
             AdminCommand::Blacklist { pattern } => {
-                
+                // Exactly the same parsing, but pass in the BLACKLIST key
+                let parts: Vec<&str> = pattern.split('|').map(str::trim).collect();
+                if parts.len() != 3 {
+                    bot.send_message(
+                        chat_id,
+                        "Usage: /blacklist <user|word>|<add|find>|<target>\n\
+                     - If add: target must be the literal user_id or word.\n\
+                     - If find: target can be '*' (list all),\n\
+                       or a plain string (SISMEMBER),\n\
+                       or a Rust‐regex (full regex syntax).",
+                    )
+                        .await?;
+                    return Ok(());
+                }
+
+                let (kind, action, target) = (parts[0], parts[1], parts[2]);
+
+                match kind {
+                    "user" => {
+                        process_set(
+                            &bot,
+                            chat_id,
+                            &mut redis_conn,
+                            key::TG_BLACKLIST_USER_KEY,
+                            "user",
+                            "blacklist",
+                            action,
+                            target,
+                        )
+                            .await?;
+                    }
+                    "word" => {
+                        process_set(
+                            &bot,
+                            chat_id,
+                            &mut redis_conn,
+                            key::TG_BLACKLIST_WORD_KEY,
+                            "word",
+                            "blacklist",
+                            action,
+                            target,
+                        )
+                            .await?;
+                    }
+                    _ => {
+                        bot.send_message(
+                            chat_id,
+                            "First part must be `user` or `word`. Usage: /blacklist <user|word>|<add|find>|<target>",
+                        )
+                            .await?;
+                    }
+                }
+            }
+            _ => {
+                bot.send_message(
+                    chat_id,
+                    "First part must be `user` or `word`. Usage: /blacklist <user|word>|<*|specific>",
+                )
+                    .await?;
             }
         }
     } else {
