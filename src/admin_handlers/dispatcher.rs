@@ -10,7 +10,7 @@ use teloxide::types::{BotCommand, ChatKind, ChatMemberStatus, InlineKeyboardButt
 use teloxide::utils::command::BotCommands;
 use teloxide::{Bot, RequestError};
 use std::fmt::Write;
-use crate::config::{field, key, suffix, AVAILABLE_FEATURES};
+use crate::config::{field, key, suffix, DEFAULT_FEATURES, ENABLED_FEATURES_KEY};
 
 pub async fn message_handler(bot: Bot, msg: Message) -> Result<(), RequestError> {
     if let Some(text) = msg.text() {
@@ -154,14 +154,34 @@ pub async fn manage_features_select_chat(
                 let chat_key = format!("{}{}", key::TG_CHATS_PREFIX, target_chat_id);
                 let mut rows: Vec<Vec<InlineKeyboardButton>> = Vec::new();
 
-                for feat in AVAILABLE_FEATURES {
+                // Features come from the global set plus any chat-specific fields
+                let mut feats: Vec<String> = redis_conn
+                    .smembers(ENABLED_FEATURES_KEY)
+                    .unwrap_or_else(|_| Vec::new());
+
+                let chat_fields: Vec<String> = redis_conn
+                    .hkeys(chat_key.clone())
+                    .unwrap_or_else(|_| Vec::new());
+
+                for field in chat_fields {
+                    if let Some(name) = field.strip_prefix("feat:") {
+                        if !feats.contains(&name.to_string()) {
+                            feats.push(name.to_string());
+                        }
+                    }
+                }
+
+                for feat in feats {
                     let field_name = format!("feat:{}", feat);
-                    // If the field exists and equals "1", we consider it enabled.
-                    let is_enabled: bool = redis_conn
-                        .hget::<_, _, Option<String>>(chat_key.clone(), field_name.clone())
-                        .unwrap_or(None)
-                        .map(|v| v == "1")
-                        .unwrap_or(false);
+                    let chat_val: Option<String> =
+                        redis_conn.hget(chat_key.clone(), field_name.clone()).unwrap_or(None);
+                    let global_on: bool =
+                        redis_conn.sismember(ENABLED_FEATURES_KEY, feat.clone()).unwrap_or(false);
+                    let is_enabled = match chat_val.as_deref() {
+                        Some("1") => true,
+                        Some("0") => false,
+                        _ => global_on,
+                    };
 
                     // Decide button text and callback_data:
                     if is_enabled {
@@ -230,16 +250,21 @@ pub async fn toggle_feature_handler(
                     let chat_key = format!("{}{}", key::TG_CHATS_PREFIX, target_chat_id);
                     let field_name = format!("feat:{}", feat_name);
 
-                    // Check current state
-                    let currently_on: bool = redis_conn
-                        .hget::<_, _, Option<String>>(chat_key.clone(), field_name.clone())
-                        .unwrap_or(None)
-                        .map(|v| v == "1")
-                        .unwrap_or(false);
+                    let chat_val: Option<String> =
+                        redis_conn.hget(chat_key.clone(), field_name.clone()).unwrap_or(None);
+                    let global_on: bool =
+                        redis_conn.sismember(ENABLED_FEATURES_KEY, feat_name).unwrap_or(false);
+                    let currently_on = match chat_val.as_deref() {
+                        Some("1") => true,
+                        Some("0") => false,
+                        _ => global_on,
+                    };
 
                     if currently_on {
-                        // It was on → remove it (disable)
-                        let _:() = redis_conn.hdel(chat_key.clone(), field_name.clone()).expect("Failed to delete feature");
+                        // It was on → set explicit 0 (disable)
+                        let _: () = redis_conn
+                            .hset(chat_key.clone(), field_name.clone(), "0")
+                            .expect("Failed to disable feature");
                         // Optionally send ephemeral feedback:
                         let _ = bot
                             .send_message(
@@ -362,8 +387,13 @@ pub async fn my_chat_member_handler(
             .expect("Failed to delete chat");
     } else {
         let _: () = conn
-            .hset(chat_key, field::NAME, update.chat.title().unwrap())
+            .hset(&chat_key, field::NAME, update.chat.title().unwrap())
             .expect("Failed to set up chat key");
+        // initialize default features for the chat
+        for feat in DEFAULT_FEATURES {
+            let field = format!("feat:{}", feat);
+            let _ : redis::RedisResult<()> = conn.hset_nx(&chat_key, field, "1");
+        }
         match bot.get_chat_administrators(chat_id).await {
             Ok(admins) => {
                 for admin in admins {
@@ -393,6 +423,15 @@ pub async fn my_chat_member_handler(
 }
 
 pub async fn run_dispatcher(bot: Bot) {
+    // Ensure default features exist in the global enabled set
+    if let Ok(client) = redis::Client::open("redis://127.0.0.1/") {
+        if let Ok(mut conn) = client.get_connection() {
+            for feat in DEFAULT_FEATURES {
+                let _ : redis::RedisResult<()> = conn.sadd(ENABLED_FEATURES_KEY, *feat);
+            }
+        }
+    }
+
     let commands:Vec<BotCommand> = AdminCommand::bot_commands();
     let _ = bot.set_my_commands(commands).await;
     let handler = dptree::entry()
