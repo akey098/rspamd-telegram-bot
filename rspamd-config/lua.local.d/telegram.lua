@@ -10,29 +10,52 @@ local settings = {
     exp_flood = '60',
     exp_ban = '3600',
     banned_q = 3
+    ,features_key = 'tg:enabled_features'
 }
+
+local function if_feature_enabled(task, chat_id, feature, cb)
+  local chat_key = settings.chat_prefix .. chat_id
+  local field = 'feat:' .. feature
+  rspamd_redis.make_request({task=task, host="127.0.0.1:6379",
+    cmd='HGET', args={chat_key, field}, callback=function(err, data)
+      if err then return end
+      if data == '1' then
+        cb()
+      elseif data == '0' then
+        return
+      else
+        rspamd_redis.make_request({task=task, host="127.0.0.1:6379",
+          cmd='SISMEMBER', args={settings.features_key, feature}, callback=function(e,d)
+            if e then return end
+            if d == 1 or d == true then cb() end
+          end})
+      end
+    end})
+end
 
 rspamd_config:register_symbol('TG_FLOOD', 1.0, function(task)
     local user_id = tostring(task:get_header('X-Telegram-User', true) or "")
     local chat_id = tostring(task:get_header('X-Telegram-Chat', true) or "")
     if user_id == "" then return false end
     local user_key = settings.user_prefix .. user_id
-    local function flood_cb(err, data)
-      if err or not data then return end
-      local count = tonumber(data) or 0
-      rspamd_redis.make_request({task=task, host="127.0.0.1:6379",
-        cmd='HEXPIRE', args={user_key, settings.exp_flood, 'NX', 'FIELDS', 1, 'flood'}, callback=function() end})
-      if count > settings.flood then
-        local chat_key = settings.chat_prefix .. chat_id
+    if_feature_enabled(task, chat_id, 'flood', function()
+      local function flood_cb(err, data)
+        if err or not data then return end
+        local count = tonumber(data) or 0
         rspamd_redis.make_request({task=task, host="127.0.0.1:6379",
-          cmd='HINCRBY', args={chat_key, 'spam_count', '1'}, callback=function() end})
-        rspamd_redis.make_request({task=task, host="127.0.0.1:6379",
-          cmd='HINCRBY', args={user_key, 'rep', '1'}, callback=function() end})
-        task:insert_result('TG_FLOOD', 1.0)
+          cmd='HEXPIRE', args={user_key, settings.exp_flood, 'NX', 'FIELDS', 1, 'flood'}, callback=function() end})
+        if count > settings.flood then
+          local chat_key = settings.chat_prefix .. chat_id
+          rspamd_redis.make_request({task=task, host="127.0.0.1:6379",
+            cmd='HINCRBY', args={chat_key, 'spam_count', '1'}, callback=function() end})
+          rspamd_redis.make_request({task=task, host="127.0.0.1:6379",
+            cmd='HINCRBY', args={user_key, 'rep', '1'}, callback=function() end})
+          task:insert_result('TG_FLOOD', 1.0)
+        end
       end
-    end
-    rspamd_redis.make_request({task=task, host="127.0.0.1:6379",
-      cmd='HINCRBY', args={user_key, 'flood', 1}, callback=flood_cb})
+      rspamd_redis.make_request({task=task, host="127.0.0.1:6379",
+        cmd='HINCRBY', args={user_key, 'flood', 1}, callback=flood_cb})
+    end)
     
   end)
 
@@ -43,6 +66,7 @@ rspamd_config:register_symbol('TG_REPEAT', 1.0, function(task)
     if user_id == "" then return end
     local user_key = settings.user_prefix .. user_id
     -- Use HINCRBY on a hash field for the message text
+    if_feature_enabled(task, chat_id, 'repeat', function()
     local function last_msg_cb(_, data)
       local function get_count_cb(_err, _data)
         if _err then return end
@@ -65,6 +89,7 @@ rspamd_config:register_symbol('TG_REPEAT', 1.0, function(task)
     end
     rspamd_redis.make_request({task=task, host="127.0.0.1:6379",
       cmd='HGET', args={user_key, 'last_msg'}, callback=last_msg_cb})
+    end)
   end)
 
 rspamd_config:register_symbol('TG_SUSPICIOUS', 1.0, function(task)
