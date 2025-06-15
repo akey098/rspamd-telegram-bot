@@ -490,4 +490,48 @@ async fn addregex_command_parses_and_writes_rule() {
 
     // cleanup
     let _ = fs::remove_file(&file_path);
+
+}
+#[tokio::test]
+async fn whitelist_command_adds_entries() {
+    flush_redis();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let chat_id: i64 = 6006;
+    let user_id: u64 = 101;
+    let bot = Bot::new("DUMMY");
+    let msg_user = make_message(chat_id, user_id, "tester", "/whitelist user|add|101", 1);
+    let _ = handle_admin_command(bot.clone(), msg_user, AdminCommand::Whitelist { pattern: "user|add|101".into() }).await;
+
+    let client = redis::Client::open("redis://127.0.0.1/").unwrap();
+    let mut conn = client.get_connection().unwrap();
+    let has_user: bool = conn.sismember(key::TG_WHITELIST_USER_KEY, "101").unwrap();
+    assert!(has_user, "User should be in whitelist set");
+
+    let msg_word = make_message(chat_id, user_id, "tester", "/whitelist word|add|hello", 2);
+    let _ = handle_admin_command(bot, msg_word, AdminCommand::Whitelist { pattern: "word|add|hello".into() }).await;
+    let words: Vec<String> = conn.smembers(key::TG_WHITELIST_WORD_KEY).unwrap();
+    assert!(words.contains(&"hello".to_string()));
+}
+
+#[tokio::test]
+async fn blacklist_command_adds_entries() {
+    flush_redis();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let chat_id: i64 = 7007;
+    let user_id: u64 = 202;
+    let bot = Bot::new("DUMMY");
+    let msg_user = make_message(chat_id, user_id, "tester", "/blacklist user|add|202", 1);
+    let _ = handle_admin_command(bot.clone(), msg_user, AdminCommand::Blacklist { pattern: "user|add|202".into() }).await;
+
+    let client = redis::Client::open("redis://127.0.0.1/").unwrap();
+    let mut conn = client.get_connection().unwrap();
+    let has_user: bool = conn.sismember(key::TG_BLACKLIST_USER_KEY, "202").unwrap();
+    assert!(has_user, "User should be in blacklist set");
+
+    let msg_word = make_message(chat_id, user_id, "tester", "/blacklist word|add|spam", 2);
+    let _ = handle_admin_command(bot, msg_word, AdminCommand::Blacklist { pattern: "word|add|spam".into() }).await;
+    let words: Vec<String> = conn.smembers(key::TG_BLACKLIST_WORD_KEY).unwrap();
+    assert!(words.contains(&"spam".to_string()));
 }
