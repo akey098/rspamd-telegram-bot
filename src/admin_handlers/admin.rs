@@ -7,7 +7,7 @@ use teloxide::{prelude::*, types::InlineKeyboardButton, types::InlineKeyboardMar
 use tokio::fs::OpenOptions;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
-use crate::config::{field, key, suffix};
+use crate::config::{field, key, suffix, ENABLED_FEATURES_KEY};
 
 use anyhow::Result;
 use regex::Regex;
@@ -391,7 +391,10 @@ pub async fn handle_admin_command(bot: Bot, msg: Message, cmd: AdminCommand) -> 
                     bot.send_message(chat_id, format!("Failed to write: {e}")).await?;
                     return Ok(());
                 }
-                
+
+                // Register the new symbol as a feature enabled by default
+                let _: redis::RedisResult<()> = redis_conn.sadd(ENABLED_FEATURES_KEY, symbol);
+
                 bot.send_message(chat_id, format!(
                     "Added regex pattern: '{}' with symbol '{}' and score {}.\nPlease reload Rspamd to apply the rule.",
                     regex_pattern, symbol, score

@@ -80,9 +80,13 @@ pub mod symbol {
     pub const BLACKLIST_WORD: &str = "BLACKLIST_WORD";
 }
 
-pub const AVAILABLE_FEATURES: &[&str] = &[
+/// Features that are enabled for every chat by default.
+pub const DEFAULT_FEATURES: &[&str] = &[
     "flood",
     "repeat",
     "whitelist",
     "blacklist",
 ];
+
+/// Redis key storing the global set of features enabled by default.
+pub const ENABLED_FEATURES_KEY: &str = "tg:enabled_features";
