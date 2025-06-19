@@ -27,3 +27,4 @@ regex = "1.11.1"
 [dev-dependencies]
 teloxide = { version = "0.14.1", features = ["macros"] }
 redis = { version = "*", features = ["tokio-comp"] }
+serial_test = "2.0"
