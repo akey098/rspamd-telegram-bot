@@ -13,7 +13,10 @@ use chrono::Utc;
 use redis::Commands;
 use rspamd_telegram_bot::admin_handlers::{handle_admin_command, AdminCommand};
 use rspamd_telegram_bot::handlers::scan_msg;
-use rspamd_telegram_bot::config::{field, key, suffix, symbol};
+use rspamd_telegram_bot::config::{
+    field, key, suffix, symbol, DEFAULT_FEATURES, ENABLED_FEATURES_KEY,
+};
+use serial_test::serial;
 use teloxide::types::{Chat, ChatId, ChatKind, ChatPrivate, MediaKind, MediaText, Message, MessageCommon, MessageId, MessageKind, User, UserId};
 use teloxide::Bot;
 use once_cell::sync::Lazy;
@@ -92,6 +95,11 @@ fn flush_redis() {
     let _: () = conn
         .flushdb()
         .expect("Failed to flush Redis");
+    for feat in DEFAULT_FEATURES {
+        let _: () = conn
+            .sadd(ENABLED_FEATURES_KEY, *feat)
+            .expect("Failed to seed default features");
+    }
 }
 
 fn make_user(id: u64, username: &str) -> User {
@@ -160,6 +168,7 @@ fn make_message(chat_id: i64, user_id: u64, username: &str, text: &str, msg_id: 
 
 
 #[tokio::test]
+#[serial]
 async fn tg_flood_sets_symbol_and_increments_stats() {
     flush_redis();
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -209,6 +218,7 @@ async fn tg_flood_sets_symbol_and_increments_stats() {
 }
 
 #[tokio::test]
+#[serial]
 async fn tg_repeat_sets_symbol_and_increments_rep() {
     flush_redis();
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -257,6 +267,7 @@ async fn tg_repeat_sets_symbol_and_increments_rep() {
 }
 
 #[tokio::test]
+#[serial]
 async fn tg_suspicious_sets_symbol() {
     flush_redis();
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -294,6 +305,7 @@ async fn tg_suspicious_sets_symbol() {
 }
 
 #[tokio::test]
+#[serial]
 async fn tg_ban_sets_symbol_and_updates_ban_state() {
     flush_redis();
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -326,6 +338,7 @@ async fn tg_ban_sets_symbol_and_updates_ban_state() {
 }
 
 #[tokio::test]
+#[serial]
 async fn tg_perm_ban_sets_symbol_and_updates_perm_ban_count() {
     flush_redis();
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -356,6 +369,7 @@ async fn tg_perm_ban_sets_symbol_and_updates_perm_ban_count() {
 }
 
 #[tokio::test]
+#[serial]
 async fn makeadmin_adds_admin_chat_and_generates_keyboard() {
     flush_redis();
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -386,6 +400,7 @@ async fn makeadmin_adds_admin_chat_and_generates_keyboard() {
 
 
 #[tokio::test]
+#[serial]
 async fn reputation_command_returns_value_or_zero() {
     flush_redis();
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -416,6 +431,7 @@ async fn reputation_command_returns_value_or_zero() {
 }
 
 #[tokio::test]
+#[serial]
 async fn stats_command_shows_chat_stats_or_list() {
     flush_redis();
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -459,6 +475,7 @@ async fn stats_command_shows_chat_stats_or_list() {
 }
 
 #[tokio::test]
+#[serial]
 async fn addregex_command_parses_and_writes_rule() {
     flush_redis();
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -493,6 +510,7 @@ async fn addregex_command_parses_and_writes_rule() {
 
 }
 #[tokio::test]
+#[serial]
 async fn whitelist_command_adds_entries() {
     flush_redis();
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -515,6 +533,7 @@ async fn whitelist_command_adds_entries() {
 }
 
 #[tokio::test]
+#[serial]
 async fn blacklist_command_adds_entries() {
     flush_redis();
     tokio::time::sleep(Duration::from_millis(50)).await;
