@@ -1,7 +1,8 @@
 local rspamd_redis = require "rspamd_redis"
+local lua_redis = require "lua_redis"
+local rspamd_logger = require "rspamd_logger"
 
--- Plugin configuration
-local config = {
+local settings = {
     flood = 30,
     repeated = 6,
     suspicious = 10,
@@ -14,271 +15,344 @@ local config = {
     features_key = 'tg:enabled_features'
 }
 
--- Helper function to check if a feature is enabled for a chat
+local redis_params
+
 local function if_feature_enabled(task, chat_id, feature, cb)
-    local chat_key = config.chat_prefix .. chat_id
-    local field = 'feat:' .. feature
-    rspamd_redis.make_request({
-        task = task,
-        host = "127.0.0.1:6379",
-        cmd = 'HGET',
-        args = {chat_key, field},
-        callback = function(err, data)
-            if err then return end
-            if data == '1' then
-                cb()
-            elseif data == '0' then
-                return
-            else
-                rspamd_redis.make_request({
-                    task = task,
-                    host = "127.0.0.1:6379",
-                    cmd = 'SISMEMBER',
-                    args = {config.features_key, feature},
-                    callback = function(e, d)
-                        if e then return end
-                        if d == 1 or d == true then cb() end
-                    end
-                })
-            end
-        end
-    })
+  local chat_key = settings.chat_prefix .. chat_id
+  local field = 'feat:' .. feature
+  lua_redis.redis_make_request(task,
+    redis_params,
+    chat_key,
+    false, -- is write
+    function(err, data)
+      if err then return end
+      if data == '1' then
+        cb()
+      elseif data == '0' then
+        return
+      else
+        lua_redis.redis_make_request(task,
+          redis_params,
+          settings.features_key,
+          false, -- is write
+          function(e, d)
+            if e then return end
+            if d == 1 or d == true then cb() end
+          end,
+          'SISMEMBER',
+          {settings.features_key, feature}
+        )
+      end
+    end,
+    'HGET',
+    {chat_key, field}
+  )
 end
 
--- Create the plugin
-local plugin = {}
-
--- Plugin initialization
-function plugin.init()
-    -- Register symbols with their scores and descriptions
-    rspamd_config:set_metric_symbol('TG_FLOOD', 1.2, 'User is flooding')
-    rspamd_config:set_metric_symbol('TG_REPEAT', 2.0, 'User have send a lot of equal messages')
-    rspamd_config:set_metric_symbol('TG_SUSPICIOUS', 5.0, 'Suspicious activity')
-    rspamd_config:set_metric_symbol('TG_BAN', 10.0, 'Banned for some time')
-    rspamd_config:set_metric_symbol('TG_PERM_BAN', 15.0, 'Permanently banned')
+-- TG_FLOOD symbol
+local function tg_flood_cb(task)
+  local user_id = tostring(task:get_header('X-Telegram-User', true) or "")
+  local chat_id = tostring(task:get_header('X-Telegram-Chat', true) or "")
+  if user_id == "" then return end
+  local user_key = settings.user_prefix .. user_id
+  
+  if_feature_enabled(task, chat_id, 'flood', function()
+    local function flood_cb(err, data)
+      if err then
+        rspamd_logger.errx(task, 'flood_cb received error: %1', err)
+        return
+      end
+      local count = tonumber(data) or 0
+      lua_redis.redis_make_request(task,
+        redis_params,
+        user_key,
+        true, -- is write
+        function() end,
+        'HEXPIRE',
+        {user_key, settings.exp_flood, 'NX', 'FIELDS', 1, 'flood'}
+      )
+      if count > settings.flood then
+        local chat_key = settings.chat_prefix .. chat_id
+        lua_redis.redis_make_request(task,
+          redis_params,
+          chat_key,
+          true, -- is write
+          function() end,
+          'HINCRBY',
+          {chat_key, 'spam_count', '1'}
+        )
+        lua_redis.redis_make_request(task,
+          redis_params,
+          user_key,
+          true, -- is write
+          function() end,
+          'HINCRBY',
+          {user_key, 'rep', '1'}
+        )
+        task:insert_result('TG_FLOOD', 1.0)
+      end
+    end
+    lua_redis.redis_make_request(task,
+      redis_params,
+      user_key,
+      true, -- is write
+      flood_cb,
+      'HINCRBY',
+      {user_key, 'flood', 1}
+    )
+  end)
 end
 
--- Main plugin callback function
-function plugin.callback(task)
-    local user_id = tostring(task:get_header('X-Telegram-User', true) or "")
-    local chat_id = tostring(task:get_header('X-Telegram-Chat', true) or "")
-    
-    if user_id == "" then return false end
-    
-    local user_key = config.user_prefix .. user_id
-    
-    -- Check for flood detection
-    if_feature_enabled(task, chat_id, 'flood', function()
-        local function flood_cb(err, data)
-            if err or not data then return end
-            local count = tonumber(data) or 0
-            rspamd_redis.make_request({
-                task = task,
-                host = "127.0.0.1:6379",
-                cmd = 'HEXPIRE',
-                args = {user_key, config.exp_flood, 'NX', 'FIELDS', 1, 'flood'},
-                callback = function() end
-            })
-            if count > config.flood then
-                local chat_key = config.chat_prefix .. chat_id
-                rspamd_redis.make_request({
-                    task = task,
-                    host = "127.0.0.1:6379",
-                    cmd = 'HINCRBY',
-                    args = {chat_key, 'spam_count', '1'},
-                    callback = function() end
-                })
-                rspamd_redis.make_request({
-                    task = task,
-                    host = "127.0.0.1:6379",
-                    cmd = 'HINCRBY',
-                    args = {user_key, 'rep', '1'},
-                    callback = function() end
-                })
-                task:insert_result('TG_FLOOD', 1.0)
-            end
+-- TG_REPEAT symbol
+local function tg_repeat_cb(task)
+  local user_id = tostring(task:get_header('X-Telegram-User', true) or "")
+  local chat_id = tostring(task:get_header('X-Telegram-Chat', true) or "")
+  if user_id == "" then return end
+  local user_key = settings.user_prefix .. user_id
+  
+  if_feature_enabled(task, chat_id, 'repeat', function()
+    local msg = tostring(task:get_rawbody()) or ""
+    local function last_msg_cb(err, data)
+      if err then
+        rspamd_logger.errx(task, 'last_msg_cb received error: %1', err)
+        return
+      end
+      local function get_count_cb(_err, _data)
+        if _err then return end
+        local count = tonumber(_data) or 0
+        if count > settings.repeated then
+          local chat_key = settings.chat_prefix .. chat_id
+          lua_redis.redis_make_request(task,
+            redis_params,
+            chat_key,
+            true, -- is write
+            function() end,
+            'HINCRBY',
+            {chat_key, 'spam_count', '1'}
+          )
+          lua_redis.redis_make_request(task,
+            redis_params,
+            user_key,
+            true, -- is write
+            function() end,
+            'HINCRBY',
+            {user_key, 'rep', '1'}
+          )
+          task:insert_result('TG_REPEAT', 1.0)
         end
-        rspamd_redis.make_request({
-            task = task,
-            host = "127.0.0.1:6379",
-            cmd = 'HINCRBY',
-            args = {user_key, 'flood', 1},
-            callback = flood_cb
-        })
-    end)
-    
-    -- Check for repeat detection
-    if_feature_enabled(task, chat_id, 'repeat', function()
-        local msg = tostring(task:get_rawbody()) or ""
-        local function last_msg_cb(_, data)
-            local function get_count_cb(_err, _data)
-                if _err then return end
-                local count = tonumber(_data) or 0
-                if count > config.repeated then
-                    local chat_key = config.chat_prefix .. chat_id
-                    rspamd_redis.make_request({
-                        task = task,
-                        host = "127.0.0.1:6379",
-                        cmd = 'HINCRBY',
-                        args = {chat_key, 'spam_count', '1'},
-                        callback = function() end
-                    })
-                    rspamd_redis.make_request({
-                        task = task,
-                        host = "127.0.0.1:6379",
-                        cmd = 'HINCRBY',
-                        args = {user_key, 'rep', '1'},
-                        callback = function() end
-                    })
-                    task:insert_result('TG_REPEAT', 1.0)
-                end
-            end
-            if tostring(data) == msg then
-                rspamd_redis.make_request({
-                    task = task,
-                    host = "127.0.0.1:6379",
-                    cmd = 'HINCRBY',
-                    args = {user_key, 'eq_msg_count', 1},
-                    callback = get_count_cb
-                })
-            else
-                rspamd_redis.make_request({
-                    task = task,
-                    host = "127.0.0.1:6379",
-                    cmd = 'HSET',
-                    args = {user_key, 'eq_msg_count', 0},
-                    callback = function() end
-                })
-            end
-            rspamd_redis.make_request({
-                task = task,
-                host = "127.0.0.1:6379",
-                cmd = 'HSET',
-                args = {user_key, 'last_msg', msg},
-                callback = function() end
-            })
-        end
-        rspamd_redis.make_request({
-            task = task,
-            host = "127.0.0.1:6379",
-            cmd = 'HGET',
-            args = {user_key, 'last_msg'},
-            callback = last_msg_cb
-        })
-    end)
-    
-    -- Check for suspicious activity
-    local function spam_cb(err, data)
-        if err or not data then return end
-        local total = tonumber(data) or 0
-        if total > config.suspicious then
-            local chat_stats = config.chat_prefix .. chat_id
-            rspamd_redis.make_request({
-                task = task,
-                host = "127.0.0.1:6379",
-                cmd = 'HINCRBY',
-                args = {chat_stats, 'spam_count', '1'},
-                callback = function() end
-            })
-            rspamd_redis.make_request({
-                task = task,
-                host = "127.0.0.1:6379",
-                cmd = 'HINCRBY',
-                args = {user_key, 'rep', '1'},
-                callback = function() end
-            })
-            task:insert_result('TG_SUSPICIOUS', 1.0)
-        end
+      end
+      if tostring(data) == msg then
+        lua_redis.redis_make_request(task,
+          redis_params,
+          user_key,
+          true, -- is write
+          get_count_cb,
+          'HINCRBY',
+          {user_key, 'eq_msg_count', 1}
+        )
+      else
+        lua_redis.redis_make_request(task,
+          redis_params,
+          user_key,
+          true, -- is write
+          function() end,
+          'HSET',
+          {user_key, 'eq_msg_count', 0}
+        )
+      end
+      lua_redis.redis_make_request(task,
+        redis_params,
+        user_key,
+        true, -- is write
+        function() end,
+        'HSET',
+        {user_key, 'last_msg', msg}
+      )
     end
-    rspamd_redis.make_request({
-        task = task,
-        host = "127.0.0.1:6379",
-        cmd = 'HGET',
-        args = {user_key, 'rep'},
-        callback = spam_cb
-    })
-    
-    -- Check for temporary ban
-    local function ban_cb(err, data)
-        if err or not data then return end
-        local total = tonumber(data) or 0
-        if total > config.ban then
-            local chat_stats = config.chat_prefix .. chat_id
-            rspamd_redis.make_request({
-                task = task,
-                host = "127.0.0.1:6379",
-                cmd = 'HINCRBY',
-                args = {chat_stats, 'banned', '1'},
-                callback = function() end
-            })
-            local function banned_cb(_err, _data)
-                if _err or not _data then return end
-                rspamd_redis.make_request({
-                    task = task,
-                    host = "127.0.0.1:6379",
-                    cmd = 'HEXPIRE',
-                    args = {user_key, config.exp_ban, 'FIELDS', 1, 'banned'},
-                    callback = function() end
-                })
-            end
-            rspamd_redis.make_request({
-                task = task,
-                host = "127.0.0.1:6379",
-                cmd = 'HSET',
-                args = {user_key, 'banned', '1'},
-                callback = banned_cb
-            })
-            rspamd_redis.make_request({
-                task = task,
-                host = "127.0.0.1:6379",
-                cmd = 'HINCRBY',
-                args = {user_key, 'rep', '-5'},
-                callback = function() end
-            })
-            rspamd_redis.make_request({
-                task = task,
-                host = "127.0.0.1:6379",
-                cmd = 'HINCRBY',
-                args = {user_key, 'banned_q', '1'},
-                callback = function() end
-            })
-            task:insert_result('TG_BAN', 1.0)
-        end
-    end
-    rspamd_redis.make_request({
-        task = task,
-        host = "127.0.0.1:6379",
-        cmd = 'HGET',
-        args = {user_key, 'rep'},
-        callback = ban_cb
-    })
-    
-    -- Check for permanent ban
-    local function perm_ban_cb(err, data)
-        if err or not data then return end
-        local banned_q = tonumber(data) or 0
-        if banned_q > config.banned_q then
-            local chat_stats = config.chat_prefix .. chat_id
-            rspamd_redis.make_request({
-                task = task,
-                host = "127.0.0.1:6379",
-                cmd = 'HINCRBY',
-                args = {chat_stats, 'perm_banned', '1'},
-                callback = function() end
-            })
-            task:insert_result('TG_PERM_BAN', 1.0)
-        end
-    end
-    rspamd_redis.make_request({
-        task = task,
-        host = "127.0.0.1:6379",
-        cmd = 'HGET',
-        args = {user_key, 'banned_q'},
-        callback = perm_ban_cb
-    })
-    
-    return true
+    lua_redis.redis_make_request(task,
+      redis_params,
+      user_key,
+      false, -- is write
+      last_msg_cb,
+      'HGET',
+      {user_key, 'last_msg'}
+    )
+  end)
 end
 
--- Register the plugin
-rspamd_config:register_plugin('telegram', plugin)
+-- TG_SUSPICIOUS symbol
+local function tg_suspicious_cb(task)
+  local user_id = tostring(task:get_header('X-Telegram-User', true) or "")
+  local chat_id = tostring(task:get_header('X-Telegram-Chat', true) or "")
+  if user_id == "" then return end
+  local user_key = settings.user_prefix .. user_id
+  
+  local function spam_cb(err, data)
+    if err then
+      rspamd_logger.errx(task, 'spam_cb received error: %1', err)
+      return
+    end
+    local total = tonumber(data) or 0
+    if total > settings.suspicious then
+      local chat_stats = settings.chat_prefix .. chat_id
+      lua_redis.redis_make_request(task,
+        redis_params,
+        chat_stats,
+        true, -- is write
+        function() end,
+        'HINCRBY',
+        {chat_stats, 'spam_count', '1'}
+      )
+      lua_redis.redis_make_request(task,
+        redis_params,
+        user_key,
+        true, -- is write
+        function() end,
+        'HINCRBY',
+        {user_key, 'rep', '1'}
+      )
+      task:insert_result('TG_SUSPICIOUS', 1.0)
+    end
+  end
+  lua_redis.redis_make_request(task,
+    redis_params,
+    user_key,
+    false, -- is write
+    spam_cb,
+    'HGET',
+    {user_key, 'rep'}
+  )
+end
+
+-- TG_BAN symbol
+local function tg_ban_cb(task)
+  local user_id = tostring(task:get_header('X-Telegram-User', true) or "")
+  local chat_id = tostring(task:get_header('X-Telegram-Chat', true) or "")
+  if user_id == "" then return end
+  local user_key = settings.user_prefix .. user_id
+  
+  local function ban_cb(err, data)
+    if err then
+      rspamd_logger.errx(task, 'ban_cb received error: %1', err)
+      return
+    end
+    local total = tonumber(data) or 0
+    if total > settings.ban then
+      local chat_stats = settings.chat_prefix .. chat_id
+      lua_redis.redis_make_request(task,
+        redis_params,
+        chat_stats,
+        true, -- is write
+        function() end,
+        'HINCRBY',
+        {chat_stats, 'banned', '1'}
+      )
+      local function banned_cb(_err, _data)
+        if _err or not _data then return end
+        lua_redis.redis_make_request(task,
+          redis_params,
+          user_key,
+          true, -- is write
+          function() end,
+          'HEXPIRE',
+          {user_key, settings.exp_ban, 'FIELDS', 1, 'banned'}
+        )
+      end
+      lua_redis.redis_make_request(task,
+        redis_params,
+        user_key,
+        true, -- is write
+        banned_cb,
+        'HSET',
+        {user_key, 'banned', '1'}
+      )
+      lua_redis.redis_make_request(task,
+        redis_params,
+        user_key,
+        true, -- is write
+        function() end,
+        'HINCRBY',
+        {user_key, 'rep', '-5'}
+      )
+      lua_redis.redis_make_request(task,
+        redis_params,
+        user_key,
+        true, -- is write
+        function() end,
+        'HINCRBY',
+        {user_key, 'banned_q', '1'}
+      )
+      task:insert_result('TG_BAN', 1.0)
+    end
+  end
+  lua_redis.redis_make_request(task,
+    redis_params,
+    user_key,
+    false, -- is write
+    ban_cb,
+    'HGET',
+    {user_key, 'rep'}
+  )
+end
+
+-- TG_PERM_BAN symbol
+local function tg_perm_ban_cb(task)
+  local user_id = tostring(task:get_header('X-Telegram-User', true) or "")
+  local chat_id = tostring(task:get_header('X-Telegram-Chat', true) or "")
+  if user_id == "" then return end
+  local user_key = settings.user_prefix .. user_id
+  
+  local function perm_ban_cb(err, data)
+    if err then
+      rspamd_logger.errx(task, 'perm_ban_cb received error: %1', err)
+      return
+    end
+    local banned_q = tonumber(data) or 0
+    if banned_q > settings.banned_q then
+      local chat_stats = settings.chat_prefix .. chat_id
+      lua_redis.redis_make_request(task,
+        redis_params,
+        chat_stats,
+        true, -- is write
+        function() end,
+        'HINCRBY',
+        {chat_stats, 'perm_banned', '1'}
+      )
+      task:insert_result('TG_PERM_BAN', 1.0)
+    end
+  end
+  lua_redis.redis_make_request(task,
+    redis_params,
+    user_key,
+    false, -- is write
+    perm_ban_cb,
+    'HGET',
+    {user_key, 'banned_q'}
+  )
+end
+
+-- Load redis server for module named 'telegram'
+redis_params = lua_redis.parse_redis_server('telegram')
+if redis_params then
+  -- Register symbols using modern syntax
+  rspamd_config.TG_FLOOD = {
+    callback = tg_flood_cb,
+    description = 'User is flooding'
+  }
+  rspamd_config.TG_REPEAT = {
+    callback = tg_repeat_cb,
+    description = 'User have send a lot of equal messages'
+  }
+  rspamd_config.TG_SUSPICIOUS = {
+    callback = tg_suspicious_cb,
+    description = 'Suspicious activity'
+  }
+  rspamd_config.TG_BAN = {
+    callback = tg_ban_cb,
+    description = 'Banned for some time'
+  }
+  rspamd_config.TG_PERM_BAN = {
+    callback = tg_perm_ban_cb,
+    description = 'Permanently banned'
+  }
+end 
