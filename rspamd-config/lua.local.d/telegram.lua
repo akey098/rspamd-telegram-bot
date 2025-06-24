@@ -15,6 +15,10 @@ local settings = {
     link_spam = 3,
     mentions = 5,
     caps_ratio = 0.7,
+    -- Timing heuristics (seconds)
+    join_fast  = 10,          -- first message within 10 s of join → spammy
+    join_slow  = 86400,       -- first message after 24 h of join → suspicious bot
+    silence    = 2592000,     -- 30 days without message → dormant bot
     features_key = 'tg:enabled_features'
 }
 
@@ -373,6 +377,59 @@ local function tg_caps_cb(task)
   end
 end
 
+-- TG_TIMING related rules
+local function tg_timing_cb(task)
+  local user_id = tostring(task:get_header('X-Telegram-User', true) or "")
+  if user_id == "" then return end
+  local user_key = settings.user_prefix .. user_id
+
+  local now = task:get_date({format = 'connect', gmt = true}) or os.time()
+
+  local function timing_cb(err, data)
+    if err then return end
+
+    local joined = tonumber(data[1]) -- may be nil
+    local first_ts = tonumber(data[2])
+    local last_ts  = tonumber(data[3])
+
+    --------------------------------------------------
+    -- 1. First-message timing after join
+    --------------------------------------------------
+    if not first_ts and joined then
+      local delta = now - joined
+      if delta <= settings.join_fast then
+        task:insert_result('TG_FIRST_FAST', 3.0)
+      elseif delta >= settings.join_slow then
+        task:insert_result('TG_FIRST_SLOW', 2.0)
+      end
+      -- set first_ts
+      lua_redis.redis_make_request(task, redis_params, user_key, true, function() end,
+        'HSET', {user_key, 'first_ts', tostring(now)})
+    end
+
+    --------------------------------------------------
+    -- 2. Long silence detection
+    --------------------------------------------------
+    if last_ts and (now - last_ts) >= settings.silence then
+      task:insert_result('TG_SILENT', 1.5)
+    end
+
+    -- Always update last_ts to now
+    lua_redis.redis_make_request(task, redis_params, user_key, true, function() end,
+      'HSET', {user_key, 'last_ts', tostring(now)})
+  end
+
+  -- Fetch joined, first_ts, last_ts in one HMGET
+  lua_redis.redis_make_request(task,
+    redis_params,
+    user_key,
+    false,
+    timing_cb,
+    'HMGET',
+    {user_key, 'joined', 'first_ts', 'last_ts'}
+  )
+end
+
 -- Load redis server for module named 'telegram'
 redis_params = lua_redis.parse_redis_server('telegram')
 if redis_params then
@@ -409,5 +466,18 @@ if redis_params then
   rspamd_config.TG_CAPS = {
     callback = tg_caps_cb,
     description = 'Message is written almost entirely in capital letters'
+  }
+  -- Timing heuristics
+  rspamd_config.TG_FIRST_FAST = {
+    callback = tg_timing_cb,
+    description = 'First message sent immediately after join'
+  }
+  rspamd_config.TG_FIRST_SLOW = {
+    callback = tg_timing_cb,
+    description = 'First message sent long after join'
+  }
+  rspamd_config.TG_SILENT = {
+    callback = tg_timing_cb,
+    description = 'User has been silent for a long time'
   }
 end 
