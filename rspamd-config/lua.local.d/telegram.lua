@@ -1,3 +1,12 @@
+--[[
+  This monolithic version has been superseded by the modular
+  implementation located in `lua.local.d/telegram/` (core.lua, links.lua …).
+  It is kept for reference; execution short-circuits immediately to avoid
+  double symbol registration.
+]]
+
+return
+
 local rspamd_redis = require "rspamd_redis"
 local lua_redis = require "lua_redis"
 local rspamd_logger = require "rspamd_logger"
@@ -24,6 +33,9 @@ local settings = {
     emoji_limit = 10,        -- more than 10 emoji considered spam
     phone_regex = '%+?%d[%d%-%s%(%)]%d%d%d%d', -- simplistic phone pattern
     spam_chat_regex = 't.me/joinchat',
+    shorteners = {'bit%.ly', 't%.co', 'goo%.gl', 'tinyurl%.com', 'is%.gd', 'ow%.ly'},
+    mixed_script_ratio = 0.3, -- 30% of chars from another script
+    zalgo_marks = 5,
     features_key = 'tg:enabled_features'
 }
 
@@ -475,6 +487,29 @@ local function tg_spam_chat_cb(task)
   end
 end
 
+-- TG_SHORTENER: contains URL shortener link
+local function tg_shortener_cb(task)
+  local text = tostring(task:get_rawbody()) or ""
+  for _,s in ipairs(settings.shorteners) do
+    if text:lower():find(s) then
+      task:insert_result('TG_SHORTENER', 2.0)
+      break
+    end
+  end
+end
+
+-- Mixed script and Zalgo rules are complex due to UTF-8 pattern limitations in Lua 5.1;
+-- they are commented out for now to avoid syntax issues. Uncomment when proper UTF-8
+-- handling (via rspamd_regexp or PCRE) is added.
+
+-- TG_GIBBERISH: long sequences of random consonants / repeated chars
+local function tg_gibberish_cb(task)
+  local text = tostring(task:get_rawbody()) or ""
+  if text:match('[bcdfghjklmnpqrstvwxzBCDFGHJKLMNPQRSTVWXZ][bcdfghjklmnpqrstvwxzBCDFGHJKLMNPQRSTVWXZ][bcdfghjklmnpqrstvwxzBCDFGHJKLMNPQRSTVWXZ][bcdfghjklmnpqrstvwxzBCDFGHJKLMNPQRSTVWXZ][bcdfghjklmnpqrstvwxzBCDFGHJKLMNPQRSTVWXZ]') then
+    task:insert_result('TG_GIBBERISH', 2.0)
+  end
+end
+
 -- Load redis server for module named 'telegram'
 redis_params = lua_redis.parse_redis_server('telegram')
 if redis_params then
@@ -570,6 +605,19 @@ if redis_params then
     callback = tg_spam_chat_cb,
     description = 'Contains spam chat',
     score = 3.0,
+    group = 'telegram'
+  }
+  rspamd_config.TG_SHORTENER = {
+    callback = tg_shortener_cb,
+    description = 'Contains URL shortener link',
+    score = 2.0,
+    group = 'telegram'
+  }
+  -- TG_MIXED_SCRIPTS and TG_ZALGO disabled until robust UTF-8 pattern support added
+  rspamd_config.TG_GIBBERISH = {
+    callback = tg_gibberish_cb,
+    description = 'Gibberish consonant sequences',
+    score = 2.0,
     group = 'telegram'
   }
 end 
