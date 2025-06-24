@@ -19,6 +19,10 @@ local settings = {
     join_fast  = 10,          -- first message within 10 s of join → spammy
     join_slow  = 86400,       -- first message after 24 h of join → suspicious bot
     silence    = 2592000,     -- 30 days without message → dormant bot
+    -- Additional heuristic thresholds
+    invite_link_patterns = {'t.me/joinchat', 't.me/+', 'telegram.me/joinchat'},
+    emoji_limit = 10,        -- more than 10 emoji considered spam
+    phone_regex = '%+?%d[%d%-%s%(%)]%d%d%d%d', -- simplistic phone pattern
     features_key = 'tg:enabled_features'
 }
 
@@ -430,6 +434,38 @@ local function tg_timing_cb(task)
   )
 end
 
+-- TG_INVITE_LINK: message contains Telegram invite link
+local function tg_invite_link_cb(task)
+  local text = tostring(task:get_rawbody()) or ""
+  for _,pat in ipairs(settings.invite_link_patterns) do
+    if text:lower():find(pat, 1, true) then
+      task:insert_result('TG_INVITE_LINK', 4.0)
+      break
+    end
+  end
+end
+
+-- TG_EMOJI_SPAM: too many emoji characters
+local function tg_emoji_spam_cb(task)
+  local text = tostring(task:get_rawbody()) or ""
+  local count = 0
+  for _ in text:gmatch('[600-64f300-5ff680-6ff1e0-1ff]') do
+    count = count + 1
+    if count > settings.emoji_limit then
+      task:insert_result('TG_EMOJI_SPAM', 2.5)
+      break
+    end
+  end
+end
+
+-- TG_PHONE_SPAM: message contains phone number pattern (promo spam)
+local function tg_phone_spam_cb(task)
+  local text = tostring(task:get_rawbody()) or ""
+  if text:match(settings.phone_regex) then
+    task:insert_result('TG_PHONE_SPAM', 3.0)
+  end
+end
+
 -- Load redis server for module named 'telegram'
 redis_params = lua_redis.parse_redis_server('telegram')
 if redis_params then
@@ -500,6 +536,25 @@ if redis_params then
     callback = tg_timing_cb,
     description = 'User has been silent for a long time',
     score = 1.5,
+    group = 'telegram'
+  }
+  -- ClubDoorman-inspired heuristics
+  rspamd_config.TG_INVITE_LINK = {
+    callback = tg_invite_link_cb,
+    description = 'Telegram invite link detected',
+    score = 4.0,
+    group = 'telegram'
+  }
+  rspamd_config.TG_EMOJI_SPAM = {
+    callback = tg_emoji_spam_cb,
+    description = 'Excessive emoji usage',
+    score = 2.5,
+    group = 'telegram'
+  }
+  rspamd_config.TG_PHONE_SPAM = {
+    callback = tg_phone_spam_cb,
+    description = 'Contains phone number spam',
+    score = 3.0,
     group = 'telegram'
   }
 end 
