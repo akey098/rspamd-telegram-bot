@@ -138,7 +138,7 @@ local function tg_repeat_cb(task)
             'HINCRBY',
             {user_key, 'rep', '1'}
           )
-          task:insert_result('TG_REPEAT', 1.0)
+          task:insert_result('TG_REPEAT', 2.0)
         end
       end
       if tostring(data) == msg then
@@ -211,7 +211,7 @@ local function tg_suspicious_cb(task)
         'HINCRBY',
         {user_key, 'rep', '1'}
       )
-      task:insert_result('TG_SUSPICIOUS', 1.0)
+      task:insert_result('TG_SUSPICIOUS', 5.0)
     end
   end
   lua_redis.redis_make_request(task,
@@ -282,7 +282,7 @@ local function tg_ban_cb(task)
         'HINCRBY',
         {user_key, 'banned_q', '1'}
       )
-      task:insert_result('TG_BAN', 1.0)
+      task:insert_result('TG_BAN', 10.0)
     end
   end
   lua_redis.redis_make_request(task,
@@ -318,7 +318,7 @@ local function tg_perm_ban_cb(task)
         'HINCRBY',
         {chat_stats, 'perm_banned', '1'}
       )
-      task:insert_result('TG_PERM_BAN', 1.0)
+      task:insert_result('TG_PERM_BAN', 20.0)
     end
   end
   lua_redis.redis_make_request(task,
@@ -330,6 +330,8 @@ local function tg_perm_ban_cb(task)
     {user_key, 'banned_q'}
   )
 end
+
+
 
 -- Load redis server for module named 'telegram'
 redis_params = lua_redis.parse_redis_server('telegram')

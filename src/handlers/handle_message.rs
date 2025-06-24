@@ -1,4 +1,4 @@
-use crate::config::{field, key, symbol};
+use crate::config::{field, key};
 use crate::handlers::scan_msg;
 use chrono::{Duration, Utc};
 use redis::Commands;
@@ -34,119 +34,102 @@ pub async fn handle_message(
             .hget(key.clone(), field::ADMIN_CHAT)
             .expect("Failed to get admin chat");
     }
-    if scan_result.symbols.contains_key(symbol::TG_PERM_BAN) {
-        let _ = bot.delete_message(chat_id, message.id).await;
-        let _ = bot.ban_chat_member(chat_id, user_id).await;
-        println!("User {} in chat {} banned", user_id, chat_id);
-        if admin_chat_exists {
-            bot.send_message(
-                ChatId(admin_chat[0]),
-                format!(
-                    "Banned user {} in chat {} for spam",
-                    user_id, chat_id
-                ),
-            )
-                .await?;
-        } else {
-            bot.send_message(
-                chat_id,
-                format!(
-                    "Banned user {} in chat {} for spam",
-                    user_id, chat_id
-                ),
-            )
-                .await?;
+
+    // -------------------------------------------------------------
+    // Rspamd **custom actions** integration
+    // We now rely on the `action` field returned by Rspamd instead of
+    // manually comparing scores or looking for specific symbols.
+    // The expected custom actions should be defined in `local.d/actions.conf`,
+    // e.g.:
+    //   actions {
+    //     tg_warn      = { score = 5.0;  }
+    //     tg_delete    = { score = 10.0; }
+    //     tg_ban       = { score = 12.0; }
+    //     tg_perm_ban  = { score = 15.0; }
+    //   }
+    // -------------------------------------------------------------
+    match scan_result.action.as_str() {
+        // Permanently ban the user and remove the message
+        "tg_perm_ban" => {
+            let _ = bot.delete_message(chat_id, message.id).await;
+            let _ = bot.ban_chat_member(chat_id, user_id).await;
+            println!("User {} in chat {} permanently banned", user_id, chat_id);
+
+            let notify_text = format!("Banned user {} in chat {} for spam", user_id, chat_id);
+            if admin_chat_exists {
+                bot.send_message(ChatId(admin_chat[0]), notify_text).await?;
+            } else {
+                bot.send_message(chat_id, notify_text).await?;
+            }
         }
-    }
-    else if scan_result.symbols.contains_key(symbol::TG_BAN) {
-        let _ = bot.delete_message(chat_id, message.id).await;
-        println!(
-            "Deleting message {} from chat {} because it appears to be spam.",
-            message.id, chat_id
-        );
-        let ttl: i64 = redis_conn
-            .httl(key.clone(), field::BANNED)
-            .expect("Failed to check user's banned.");
-        let _ = mute_user_for(bot.clone(), chat_id, user_id, ttl).await;
-        println!("Muted user {} for {}", user_id, ttl);
-        if admin_chat_exists {
-            bot.send_message(
-                ChatId(admin_chat[0]),
-                format!(
-                    "Deleted message {} from user {} in chat {}. Muted user {} for {}",
-                    message.id, user_id, chat_id, user_id, ttl
-                ),
-            )
-                .await?;
-        } else {
-            bot.send_message(
-                chat_id,
-                format!(
-                    "Deleted message {} from user {} in chat {}. Muted user {} for {}",
-                    message.id, user_id, chat_id, user_id, ttl
-                ),
-            )
-                .await?;
+
+        // Temporarily mute the user (ban) and delete the offending message
+        "tg_ban" => {
+            let _ = bot.delete_message(chat_id, message.id).await;
+            println!(
+                "Deleting message {} from chat {} and muting user {}.",
+                message.id, chat_id, user_id
+            );
+
+            let ttl: i64 = redis_conn
+                .httl(key.clone(), field::BANNED)
+                .expect("Failed to check user's banned.");
+            let _ = mute_user_for(bot.clone(), chat_id, user_id, ttl).await;
+
+            let notify_text = format!(
+                "Deleted message {} from user {} in chat {}. Muted user for {} seconds",
+                message.id, user_id, chat_id, ttl
+            );
+            if admin_chat_exists {
+                bot.send_message(ChatId(admin_chat[0]), notify_text).await?;
+            } else {
+                bot.send_message(chat_id, notify_text).await?;
+            }
         }
-        
-    } else if scan_result.score >= 10.0
-        || scan_result.symbols.contains_key(symbol::TG_FLOOD)
-        || scan_result.symbols.contains_key(symbol::TG_SUSPICIOUS)
-    {
-        println!(
-            "Deleting message {} from chat {} because it appears to be spam.",
-            message.id, chat_id
-        );
-        bot.delete_message(chat_id, message.id).await?;
-        let _: () = redis_conn
-            .hincr(key.clone(), field::DELETED, 1)
-            .expect("Failed to update deleted count");
-        if admin_chat_exists {
-            bot.send_message(
-                ChatId(admin_chat[0]),
-                format!(
-                    "Deleting message {} from user {} in chat {} for spam.",
-                    message.id, user_id, chat_id
-                ),
-            )
-            .await?;
-        } else {
-            bot.send_message(
-                chat_id,
-                format!(
-                    "Deleting message {} from user {} in chat {} for spam.",
-                    message.id, user_id, chat_id
-                ),
-            )
-            .await?;
+
+        // Delete message but do not ban the user
+        "tg_delete" => {
+            println!(
+                "Deleting message {} from chat {} due to spam.",
+                message.id, chat_id
+            );
+            bot.delete_message(chat_id, message.id).await?;
+            let _: () = redis_conn
+                .hincr(key.clone(), field::DELETED, 1)
+                .expect("Failed to update deleted count");
+
+            let notify_text = format!(
+                "Deleted message {} from user {} in chat {} for spam.",
+                message.id, user_id, chat_id
+            );
+            if admin_chat_exists {
+                bot.send_message(ChatId(admin_chat[0]), notify_text).await?;
+            } else {
+                bot.send_message(chat_id, notify_text).await?;
+            }
         }
-    } else if scan_result.score >= 5.0 {
-        println!(
-            "Warning user {} in chat {} about spammy behavior.",
-            user_id, chat_id
-        );
-        if admin_chat_exists {
-            bot.send_message(
-                ChatId(admin_chat[0]),
-                format!(
-                    "Warning message {} from user {} in chat {} is looks like spam.",
-                    message.id, user_id, chat_id
-                ),
-            )
-            .await?;
-        } else {
-            bot.send_message(
-                chat_id,
-                format!(
-                    "Warning message {} from user {} in chat {} is looks like spam.",
-                    message.id, user_id, chat_id
-                ),
-            )
-            .await?;
+
+        // Just warn the user
+        "tg_warn" => {
+            println!(
+                "Warning user {} in chat {} about spammy behavior.",
+                user_id, chat_id
+            );
+            let notify_text = format!(
+                "Warning: message {} from user {} in chat {} looks like spam.",
+                message.id, user_id, chat_id
+            );
+            if admin_chat_exists {
+                bot.send_message(ChatId(admin_chat[0]), notify_text).await?;
+            } else {
+                bot.send_message(chat_id, notify_text).await?;
+            }
         }
-        
-    } else {
-        println!("Message is ok")
+
+        // Any other action: do nothing special
+        _ => {
+            println!("Message is ok");
+        }
     }
 
     println!("Your score is {} and the action is {}", scan_result.score, scan_result.action);
