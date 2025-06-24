@@ -1,3 +1,18 @@
+--[[
+  LEGACY WHITELIST/BLACKLIST RULES
+  
+  This file contains legacy whitelist/blacklist functionality.
+  The functionality has been moved to the modular structure in
+  `lua.local.d/telegram/lists.lua`.
+  
+  To use the new modular structure, load `telegram_modular.lua` instead:
+  
+  require "lua.local.d.telegram_modular"
+  
+  This legacy file is kept for backward compatibility but will be
+  deprecated in favor of the modular structure.
+]]
+
 local rspamd_redis = require "rspamd_redis"
 local lua_redis = require "lua_redis"
 local rspamd_logger = require "rspamd_logger"
