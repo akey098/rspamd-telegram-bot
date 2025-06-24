@@ -96,7 +96,7 @@ local function tg_flood_cb(task)
           'HINCRBY',
           {user_key, 'rep', '1'}
         )
-        task:insert_result('TG_FLOOD', 1.0)
+        task:insert_result('TG_FLOOD', 1.2)
       end
     end
     lua_redis.redis_make_request(task,
@@ -325,7 +325,7 @@ local function tg_perm_ban_cb(task)
         'HINCRBY',
         {chat_stats, 'perm_banned', '1'}
       )
-      task:insert_result('TG_PERM_BAN', 20.0)
+      task:insert_result('TG_PERM_BAN', 15.0)
     end
   end
   lua_redis.redis_make_request(task,
@@ -346,7 +346,7 @@ local function tg_link_spam_cb(task)
   -- We don't need per-user tracking for simple link counting
   local urls = task:get_urls() or {}
   if #urls >= settings.link_spam then
-    task:insert_result('TG_LINK_SPAM', 2.0)
+    task:insert_result('TG_LINK_SPAM', 2.5)
   end
 end
 
@@ -358,7 +358,7 @@ local function tg_mentions_cb(task)
   local n = 0
   for _ in raw:gmatch("@[%w_]+") do n = n + 1 end
   if n >= settings.mentions then
-    task:insert_result('TG_MENTIONS', 2.0)
+    task:insert_result('TG_MENTIONS', 2.5)
   end
 end
 
@@ -373,7 +373,7 @@ local function tg_caps_cb(task)
     if ch:match("%u") then caps = caps + 1 end
   end
   if letters > 0 and (caps / letters) >= settings.caps_ratio then
-    task:insert_result('TG_CAPS', 1.0)
+    task:insert_result('TG_CAPS', 1.5)
   end
 end
 
@@ -436,48 +436,70 @@ if redis_params then
   -- Register symbols using modern syntax
   rspamd_config.TG_FLOOD = {
     callback = tg_flood_cb,
-    description = 'User is flooding'
+    description = 'User is flooding',
+    score = 1.2,
+    group = 'telegram'
   }
   rspamd_config.TG_REPEAT = {
     callback = tg_repeat_cb,
-    description = 'User have send a lot of equal messages'
+    description = 'User have send a lot of equal messages',
+    score = 2.0,
+    group = 'telegram'
   }
   rspamd_config.TG_SUSPICIOUS = {
     callback = tg_suspicious_cb,
-    description = 'Suspicious activity'
+    description = 'Suspicious activity',
+    score = 5.0,
+    group = 'telegram'
   }
   rspamd_config.TG_BAN = {
     callback = tg_ban_cb,
-    description = 'Banned for some time'
+    description = 'Banned for some time',
+    score = 10.0,
+    group = 'telegram'
   }
   rspamd_config.TG_PERM_BAN = {
     callback = tg_perm_ban_cb,
-    description = 'Permanently banned'
+    description = 'Permanently banned',
+    score = 15.0,
+    group = 'telegram'
   }
   -- Register additional heuristics
   rspamd_config.TG_LINK_SPAM = {
     callback = tg_link_spam_cb,
-    description = 'Message contains excessive number of links'
+    description = 'Message contains excessive number of links',
+    score = 2.5,
+    group = 'telegram'
   }
   rspamd_config.TG_MENTIONS = {
     callback = tg_mentions_cb,
-    description = 'Message mentions too many users'
+    description = 'Message mentions too many users',
+    score = 2.5,
+    group = 'telegram'
   }
   rspamd_config.TG_CAPS = {
     callback = tg_caps_cb,
-    description = 'Message is written almost entirely in capital letters'
+    description = 'Message is written almost entirely in capital letters',
+    score = 1.5,
+    group = 'telegram'
   }
   -- Timing heuristics
   rspamd_config.TG_FIRST_FAST = {
     callback = tg_timing_cb,
-    description = 'First message sent immediately after join'
+    description = 'First message sent immediately after join',
+    score = 3.0,
+    group = 'telegram'
   }
   rspamd_config.TG_FIRST_SLOW = {
     callback = tg_timing_cb,
-    description = 'First message sent long after join'
+    description = 'First message sent long after join',
+    score = 2.0,
+    group = 'telegram'
   }
   rspamd_config.TG_SILENT = {
     callback = tg_timing_cb,
-    description = 'User has been silent for a long time'
+    description = 'User has been silent for a long time',
+    score = 1.5,
+    group = 'telegram'
   }
 end 

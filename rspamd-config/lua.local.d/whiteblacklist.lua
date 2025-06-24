@@ -181,18 +181,26 @@ if redis_params then
   -- Register symbols using modern syntax
   rspamd_config.WHITELIST_USER = {
     callback = whitelist_user_cb,
-    description = 'User is in whitelist'
+    description = 'User is in whitelist',
+    score = -20.0,
+    group = 'telegram'
   }
   rspamd_config.BLACKLIST_USER = {
     callback = blacklist_user_cb,
-    description = 'User is in blacklist'
+    description = 'User is in blacklist',
+    score = 20.0,
+    group = 'telegram'
   }
   rspamd_config.WHITELIST_WORD = {
     callback = whitelist_word_cb,
-    description = 'Word is in whitelist'
+    description = 'Word is in whitelist',
+    score = -1.0,
+    group = 'telegram'
   }
   rspamd_config.BLACKLIST_WORD = {
     callback = blacklist_word_cb,
-    description = 'Word is in blacklist'
+    description = 'Word is in blacklist',
+    score = 1.0,
+    group = 'telegram'
   }
 end 
