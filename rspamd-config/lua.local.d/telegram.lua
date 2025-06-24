@@ -23,6 +23,7 @@ local settings = {
     invite_link_patterns = {'t.me/joinchat', 't.me/+', 'telegram.me/joinchat'},
     emoji_limit = 10,        -- more than 10 emoji considered spam
     phone_regex = '%+?%d[%d%-%s%(%)]%d%d%d%d', -- simplistic phone pattern
+    spam_chat_regex = 't.me/joinchat',
     features_key = 'tg:enabled_features'
 }
 
@@ -466,6 +467,14 @@ local function tg_phone_spam_cb(task)
   end
 end
 
+-- TG_SPAM_CHAT: message contains spam chat
+local function tg_spam_chat_cb(task)
+  local text = tostring(task:get_rawbody()) or ""
+  if text:match(settings.spam_chat_regex) then
+    task:insert_result('TG_SPAM_CHAT', 3.0)
+  end
+end
+
 -- Load redis server for module named 'telegram'
 redis_params = lua_redis.parse_redis_server('telegram')
 if redis_params then
@@ -554,6 +563,12 @@ if redis_params then
   rspamd_config.TG_PHONE_SPAM = {
     callback = tg_phone_spam_cb,
     description = 'Contains phone number spam',
+    score = 3.0,
+    group = 'telegram'
+  }
+  rspamd_config.TG_SPAM_CHAT = {
+    callback = tg_spam_chat_cb,
+    description = 'Contains spam chat',
     score = 3.0,
     group = 'telegram'
   }
