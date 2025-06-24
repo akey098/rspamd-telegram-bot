@@ -12,6 +12,9 @@ local settings = {
     exp_flood = '60',
     exp_ban = '3600',
     banned_q = 3,
+    link_spam = 3,
+    mentions = 5,
+    caps_ratio = 0.7,
     features_key = 'tg:enabled_features'
 }
 
@@ -331,7 +334,44 @@ local function tg_perm_ban_cb(task)
   )
 end
 
+-- TG_LINK_SPAM: too many URLs in a single message
+local function tg_link_spam_cb(task)
+  local chat_id = tostring(task:get_header('X-Telegram-Chat', true) or "")
+  if chat_id == "" then return end
 
+  -- We don't need per-user tracking for simple link counting
+  local urls = task:get_urls() or {}
+  if #urls >= settings.link_spam then
+    task:insert_result('TG_LINK_SPAM', 2.0)
+  end
+end
+
+-- TG_MENTIONS: message mentions too many users (potentially mass ping)
+local function tg_mentions_cb(task)
+  local raw = tostring(task:get_rawbody()) or ""
+  -- count occurrences of @username – Telegram usernames are 5–32 chars of
+  -- letters, digits and underscores. We use a simple pattern here.
+  local n = 0
+  for _ in raw:gmatch("@[%w_]+") do n = n + 1 end
+  if n >= settings.mentions then
+    task:insert_result('TG_MENTIONS', 2.0)
+  end
+end
+
+-- TG_CAPS: excessive capital letters (shouting)
+local function tg_caps_cb(task)
+  local text = tostring(task:get_rawbody()) or ""
+  if #text < 20 then return end -- ignore very short messages
+
+  local letters, caps = 0, 0
+  for ch in text:gmatch("%a") do
+    letters = letters + 1
+    if ch:match("%u") then caps = caps + 1 end
+  end
+  if letters > 0 and (caps / letters) >= settings.caps_ratio then
+    task:insert_result('TG_CAPS', 1.0)
+  end
+end
 
 -- Load redis server for module named 'telegram'
 redis_params = lua_redis.parse_redis_server('telegram')
@@ -356,5 +396,18 @@ if redis_params then
   rspamd_config.TG_PERM_BAN = {
     callback = tg_perm_ban_cb,
     description = 'Permanently banned'
+  }
+  -- Register additional heuristics
+  rspamd_config.TG_LINK_SPAM = {
+    callback = tg_link_spam_cb,
+    description = 'Message contains excessive number of links'
+  }
+  rspamd_config.TG_MENTIONS = {
+    callback = tg_mentions_cb,
+    description = 'Message mentions too many users'
+  }
+  rspamd_config.TG_CAPS = {
+    callback = tg_caps_cb,
+    description = 'Message is written almost entirely in capital letters'
   }
 end 
