@@ -14,6 +14,7 @@ COPY Cargo.toml Cargo.lock ./
 # Cache dependencies
 RUN mkdir src && \
     echo 'fn main() { println!("dummy"); }' > src/main.rs && \
+    echo '' > src/lib.rs && \
     cargo build --release && \
     rm -rf src
 
