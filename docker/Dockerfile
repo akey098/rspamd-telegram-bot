@@ -11,13 +11,13 @@ RUN apt-get update && \
 WORKDIR /usr/src/app
 COPY Cargo.toml Cargo.lock ./
 
-# Кэшируем зависимости
+# Cache dependencies
 RUN mkdir src && \
     echo 'fn main() { println!("dummy"); }' > src/main.rs && \
     cargo build --release && \
     rm -rf src
 
-# Копируем все исходники и пересобираем уже настоящий бот
+# Copy all sources and rebuild the actual bot
 COPY src/ ./src/
 COPY Cargo.toml ./
 COPY Cargo.lock ./
@@ -37,7 +37,7 @@ RUN apt-get update \
       psmisc lsb-release wget gpg ca-certificates sudo redis-server \
  && rm -rf /var/lib/apt/lists/*
 
-# Добавление репозитория Rspamd
+# Add Rspamd repository
 RUN CODENAME=$(lsb_release -c -s) && \
     mkdir -p /etc/apt/keyrings && \
     wget -O- https://rspamd.com/apt-stable/gpg.key | gpg --dearmor | tee /etc/apt/keyrings/rspamd.gpg > /dev/null && \
@@ -48,7 +48,7 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends rspamd && \
     rm -rf /var/lib/apt/lists/*
 
-# Копирование всех lua-файлов и settings.conf
+# Copy all Lua files and settings.conf
 COPY rspamd-config/lua.local.d /etc/rspamd/lua.local.d/
 RUN mkdir -p /etc/rspamd/lua && \
     cp -R /etc/rspamd/lua.local.d/telegram /etc/rspamd/lua/ && \
@@ -56,13 +56,13 @@ RUN mkdir -p /etc/rspamd/lua && \
 
 COPY rspamd-config/modules.local.d /etc/rspamd/modules.local.d/
 
-# Проверка конфигурации Rspamd на этапе сборки
+# Verify Rspamd configuration at build time
 RUN rspamadm configtest
 
-# Копирование собранного бота
+# Copy the built bot
 COPY --from=builder /usr/src/app/target/release/rspamd-telegram-bot /usr/local/bin/rspamd-telegram-bot
 
-# Копирование entrypoint-скрипта
+# Copy entrypoint script
 COPY docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 

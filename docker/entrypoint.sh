@@ -5,7 +5,7 @@ set -e
 service redis-server start
 
 
-# Ждать, пока Redis не станет доступен
+# Wait until Redis is available
 for i in {1..20}; do
     if redis-cli ping | grep -q PONG; then
         echo "Redis is up!"
