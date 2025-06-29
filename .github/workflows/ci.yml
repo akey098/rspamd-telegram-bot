@@ -35,7 +35,9 @@ jobs:
       - name: Configure Rspamd
         run: |
           sudo mkdir -p /etc/rspamd/lua.local.d
+          sudo mkdir -p /etc/rspamd/lua
           sudo cp -R rspamd-config/lua.local.d/. /etc/rspamd/lua.local.d/
+          sudo cp -R rspamd-config/lua.local.d/telegram /etc/rspamd/lua/
           sudo rspamadm configtest
 
       - name: Start services
