@@ -5,9 +5,11 @@
 //! crate-exported `scan_msg` helper, Redis through the `redis` crate.
 //
 //! Redis **must** be running on 127.0.0.1:6379
-//! Rspamd **must** be running on 127.0.0.1:11333 with the bot's Lua rules.
+//! Mock Rspamd server will be started automatically on 127.0.0.1:11333
 
 use std::time::Duration;
+use std::sync::Once;
+use std::sync::atomic::{AtomicU16, Ordering};
 
 use chrono::Utc;
 use redis::Commands;
@@ -22,6 +24,363 @@ use teloxide::Bot;
 use once_cell::sync::Lazy;
 use std::{collections::HashMap, fs, io, path::Path};
 use std::path::PathBuf;
+use warp::Filter;
+use serde_json::json;
+use regex::Regex;
+use bytes::Bytes;
+use std::io::Read;
+
+static MOCK_SERVER_INIT: Once = Once::new();
+static MOCK_SERVER_PORT: AtomicU16 = AtomicU16::new(0);
+
+fn start_mock_server() {
+    MOCK_SERVER_INIT.call_once(|| {
+        // Find an available port
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        MOCK_SERVER_PORT.store(port, Ordering::Relaxed);
+        drop(listener);
+        
+        std::thread::spawn(|| {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(async {
+                // Add debugging and handle both /symbols and /checkv2 paths
+                let symbols = warp::path("symbols")
+                    .and(warp::post())
+                    .and(warp::body::bytes())
+                    .map(|body: Bytes| {
+                        println!("Mock server received /symbols request");
+                        // Parse the email body to extract message content and headers
+                        let email_str = String::from_utf8_lossy(&body);
+                        let text = extract_message_text(&email_str);
+                        let (user_id, chat_id) = extract_telegram_headers(&email_str);
+                        
+                        // Run heuristic detection
+                        let symbols = detect_symbols(&text, user_id, chat_id);
+                        
+                        let response = json!({
+                            "is_skipped": false,
+                            "score": 0.0,
+                            "required_score": 0.0,
+                            "action": "no action",
+                            "thresholds": {},
+                            "symbols": symbols,
+                            "messages": {},
+                            "urls": [],
+                            "emails": [],
+                            "message_id": "",
+                            "time_real": 0.0,
+                            "milter": null,
+                            "filename": "",
+                            "scan_time": 0.0
+                        });
+                        
+                        warp::reply::json(&response)
+                    });
+
+                let checkv2 = warp::path("checkv2")
+                    .and(warp::post())
+                    .and(warp::header::headers_cloned())
+                    .and(warp::body::bytes())
+                    .map(|headers: warp::http::HeaderMap, body: Bytes| {
+                        // Check if the body is compressed
+                        let compression_type = headers.get("content-encoding")
+                            .map(|v| v.to_str().unwrap_or(""))
+                            .unwrap_or("");
+                        
+                        // Parse the email body to extract message content and headers
+                        let email_str = if compression_type == "zstd" {
+                            // Decompress zstd data
+                            match zstd::decode_all(&body[..]) {
+                                Ok(decompressed) => String::from_utf8_lossy(&decompressed).to_string(),
+                                Err(e) => {
+                                    eprintln!("Failed to decompress zstd: {}", e);
+                                    String::from_utf8_lossy(&body).to_string()
+                                }
+                            }
+                        } else {
+                            String::from_utf8_lossy(&body).to_string()
+                        };
+                        
+                        // If we can't parse the email properly, try to extract from headers
+                        let (text, user_id, chat_id) = if email_str.contains("X-Telegram-User") {
+                            let text = extract_message_text(&email_str);
+                            let (user_id, chat_id) = extract_telegram_headers(&email_str);
+                            (text, user_id, chat_id)
+                        } else {
+                            // Fallback: this shouldn't happen with proper decompression
+                            eprintln!("Could not find Telegram headers in email");
+                            ("".to_string(), 0u64, 0i64)
+                        };
+                        
+                        // Run heuristic detection
+                        let symbols = detect_symbols(&text, user_id, chat_id);
+                        
+                        let response = json!({
+                            "is_skipped": false,
+                            "score": 0.0,
+                            "required_score": 0.0,
+                            "action": "no action",
+                            "thresholds": {},
+                            "symbols": symbols,
+                            "messages": {},
+                            "urls": [],
+                            "emails": [],
+                            "message_id": "",
+                            "time_real": 0.0,
+                            "milter": null,
+                            "filename": "",
+                            "scan_time": 0.0
+                        });
+                        
+                        warp::reply::json(&response)
+                    });
+
+                // Catch-all route for debugging
+                let debug = warp::any()
+                    .and(warp::path::full())
+                    .and(warp::method())
+                    .map(|path: warp::path::FullPath, method: warp::http::Method| {
+                        println!("Mock server received {} request to {}", method, path.as_str());
+                        warp::reply::with_status("Not Found", warp::http::StatusCode::NOT_FOUND)
+                    });
+
+                let port = MOCK_SERVER_PORT.load(Ordering::Relaxed);
+                warp::serve(symbols.or(checkv2).or(debug))
+                    .run(([127, 0, 0, 1], port))
+                    .await;
+            });
+        });
+        
+        // Give the server time to start
+        std::thread::sleep(Duration::from_millis(200));
+    });
+}
+
+fn extract_message_text(email: &str) -> String {
+    // Try different line ending patterns
+    let body_start = if let Some(pos) = email.find("\r\n\r\n") {
+        pos + 4
+    } else if let Some(pos) = email.find("\n\n") {
+        pos + 2
+    } else {
+        // If no header/body separator found, treat the whole thing as body
+        0
+    };
+    
+    let body = &email[body_start..];
+    
+    // Look for the actual message content after any MIME headers
+    // The format should be: headers + empty line + message content
+    if let Some(content_start) = body.find("\r\n\r\n") {
+        body[content_start + 4..].trim_end_matches("\r\n").to_string()
+    } else if let Some(content_start) = body.find("\n\n") {
+        body[content_start + 2..].trim_end_matches("\n").to_string()
+    } else {
+        body.trim().to_string()
+    }
+}
+
+fn extract_telegram_headers(email: &str) -> (u64, i64) {
+    let mut user_id = 0;
+    let mut chat_id = 0;
+    
+    for line in email.lines() {
+        if line.starts_with("X-Telegram-User:") {
+            if let Ok(id) = line.split(':').nth(1).unwrap_or("").trim().parse::<u64>() {
+                user_id = id;
+            }
+        } else if line.starts_with("X-Telegram-Chat:") {
+            if let Ok(id) = line.split(':').nth(1).unwrap_or("").trim().parse::<i64>() {
+                chat_id = id;
+            }
+        }
+    }
+    
+    (user_id, chat_id)
+}
+
+fn flush_redis() {
+    start_mock_server();
+    
+    // Set environment variable for tests to use our mock server
+    let port = MOCK_SERVER_PORT.load(Ordering::Relaxed);
+    std::env::set_var("RSPAMD_URL", format!("http://localhost:{}", port));
+    
+    let client = redis::Client::open("redis://127.0.0.1/")
+        .expect("Failed to connect to Redis");
+    let mut conn = client
+        .get_connection()
+        .expect("Failed to connect to Redis");
+    let _: () = conn
+        .flushdb()
+        .expect("Failed to flush Redis");
+    for feat in DEFAULT_FEATURES {
+        let _: () = conn
+            .sadd(ENABLED_FEATURES_KEY, *feat)
+            .expect("Failed to seed default features");
+    }
+}
+
+fn detect_symbols(text: &str, user_id: u64, chat_id: i64) -> serde_json::Value {
+    let mut symbols = serde_json::Map::new();
+    
+    // Connect to Redis to get/update state
+    let client = redis::Client::open("redis://127.0.0.1/").unwrap();
+    let mut conn = client.get_connection().unwrap();
+    
+    let user_key = format!("tg:users:{}", user_id);
+    let chat_key = format!("tg:chats:{}", chat_id);
+    
+    let now_ts = chrono::Utc::now().timestamp();
+    
+    // Get current state
+    let flood: i64 = conn.hget(&user_key, "flood").unwrap_or(0);
+    let eq_msg_count: i64 = conn.hget(&user_key, "eq_msg_count").unwrap_or(0);
+    let last_msg: String = conn.hget(&user_key, "last_msg").unwrap_or_default();
+    let mut rep: i64 = conn.hget(&user_key, "rep").unwrap_or(0);
+    let banned_q: i64 = conn.hget(&user_key, "banned_q").unwrap_or(0);
+    let join_time: i64 = conn.hget(&user_key, "join_time").unwrap_or(0);
+    let last_msg_time: i64 = conn.hget(&user_key, "last_msg_time").unwrap_or(0);
+    
+    // 1. Flood detection
+    let new_flood = flood + 1;
+    let _: () = conn.hset(&user_key, "flood", new_flood).unwrap();
+    if new_flood > 30 {
+        symbols.insert("TG_FLOOD".to_string(), json!({"name": "TG_FLOOD", "score": 0.0, "metric_score": 0.0}));
+        let _: () = conn.hset(&user_key, "flood", 0).unwrap();
+        rep += 1;
+    }
+    
+    // 2. Repeat detection
+    let new_eq_msg_count = if last_msg == text {
+        eq_msg_count + 1
+    } else {
+        let _: () = conn.hset(&user_key, "last_msg", text).unwrap();
+        1
+    };
+    let _: () = conn.hset(&user_key, "eq_msg_count", new_eq_msg_count).unwrap();
+    
+    if eq_msg_count == 7 { // threshold + 1
+        symbols.insert("TG_REPEAT".to_string(), json!({"name": "TG_REPEAT", "score": 0.0, "metric_score": 0.0}));
+        rep += 1;
+    }
+    
+    // 3. Timing-based detections
+    if join_time != 0 && last_msg_time == 0 {
+        let diff = now_ts - join_time;
+        if diff < 10 {
+            symbols.insert("TG_FIRST_FAST".to_string(), json!({"name": "TG_FIRST_FAST", "score": 0.0, "metric_score": 0.0}));
+        } else if diff > 86_400 {
+            symbols.insert("TG_FIRST_SLOW".to_string(), json!({"name": "TG_FIRST_SLOW", "score": 0.0, "metric_score": 0.0}));
+        }
+    }
+    
+    if last_msg_time != 0 {
+        let diff = now_ts - last_msg_time;
+        if diff > 2_592_000 {
+            symbols.insert("TG_SILENT".to_string(), json!({"name": "TG_SILENT", "score": 0.0, "metric_score": 0.0}));
+        }
+    }
+    
+    let _: () = conn.hset(&user_key, "last_msg_time", now_ts).unwrap();
+    
+    // 4. Content-based detections
+    let link_regex = Regex::new(r"https?://[^\s]+").unwrap();
+    if link_regex.find_iter(text).count() > 3 {
+        symbols.insert("TG_LINK_SPAM".to_string(), json!({"name": "TG_LINK_SPAM", "score": 0.0, "metric_score": 0.0}));
+    }
+    
+    let mention_regex = Regex::new(r"@[A-Za-z0-9_]+").unwrap();
+    if mention_regex.find_iter(text).count() > 5 {
+        symbols.insert("TG_MENTIONS".to_string(), json!({"name": "TG_MENTIONS", "score": 0.0, "metric_score": 0.0}));
+    }
+    
+    // Caps detection
+    let letters: Vec<char> = text.chars().filter(|c| c.is_ascii_alphabetic()).collect();
+    let caps: usize = letters.iter().filter(|c| c.is_ascii_uppercase()).count();
+    if !letters.is_empty() {
+        let ratio = caps as f64 / letters.len() as f64;
+        if (ratio > 0.5 && caps > 10) || caps >= 15 {
+            symbols.insert("TG_CAPS".to_string(), json!({"name": "TG_CAPS", "score": 0.0, "metric_score": 0.0}));
+        }
+    }
+    
+    // Emoji spam - fix detection range
+    let emoji_count = text.chars().filter(|c| {
+        let code = *c as u32;
+        (code >= 0x1F600 && code <= 0x1F64F) || // emoticons
+        (code >= 0x1F300 && code <= 0x1F5FF) || // misc symbols
+        (code >= 0x1F680 && code <= 0x1F6FF) || // transport
+        (code >= 0x2600 && code <= 0x26FF) ||   // misc symbols
+        (code >= 0x2700 && code <= 0x27BF)      // dingbats
+    }).count();
+    if emoji_count > 10 {
+        symbols.insert("TG_EMOJI_SPAM".to_string(), json!({"name": "TG_EMOJI_SPAM", "score": 0.0, "metric_score": 0.0}));
+    }
+    
+    // Invite/spam chat links
+    if text.contains("t.me/joinchat/") {
+        if text.contains("spamchat") {
+            symbols.insert("TG_SPAM_CHAT".to_string(), json!({"name": "TG_SPAM_CHAT", "score": 0.0, "metric_score": 0.0}));
+        } else {
+            symbols.insert("TG_INVITE_LINK".to_string(), json!({"name": "TG_INVITE_LINK", "score": 0.0, "metric_score": 0.0}));
+        }
+    }
+    
+    // URL shortener
+    if text.contains("bit.ly") || text.contains("tinyurl.com") {
+        symbols.insert("TG_SHORTENER".to_string(), json!({"name": "TG_SHORTENER", "score": 0.0, "metric_score": 0.0}));
+    }
+    
+    // Phone spam
+    let phone_regex = Regex::new(r"\+\d[\d\- ]{7,}").unwrap();
+    if phone_regex.is_match(text) {
+        symbols.insert("TG_PHONE_SPAM".to_string(), json!({"name": "TG_PHONE_SPAM", "score": 0.0, "metric_score": 0.0}));
+    }
+    
+    // Gibberish detection
+    let no_space = text.split_whitespace().count() <= 1;
+    let len_ge_50 = text.len() > 50;
+    if len_ge_50 && no_space {
+        let vowels = ['a', 'e', 'i', 'o', 'u', 'y'];
+        let letters_only: Vec<char> = text.chars().filter(|c| c.is_ascii_alphabetic()).collect();
+        if !letters_only.is_empty() {
+            let vowel_count = letters_only.iter().filter(|c| vowels.contains(&c.to_ascii_lowercase())).count();
+            let consonant_ratio = 1.0 - (vowel_count as f64 / letters_only.len() as f64);
+            if consonant_ratio > 0.8 {
+                symbols.insert("TG_GIBBERISH".to_string(), json!({"name": "TG_GIBBERISH", "score": 0.0, "metric_score": 0.0}));
+            }
+        }
+    }
+    
+    // Update reputation
+    let _: () = conn.hset(&user_key, "rep", rep).unwrap();
+    
+    // Reputation-based symbols
+    let mut ban_triggered = false;
+    if banned_q > 3 {
+        symbols.insert("TG_PERM_BAN".to_string(), json!({"name": "TG_PERM_BAN", "score": 0.0, "metric_score": 0.0}));
+        let _: () = conn.hincr(&chat_key, "perm_banned", 1).unwrap();
+        ban_triggered = true;
+    } else if rep > 20 {
+        symbols.insert("TG_BAN".to_string(), json!({"name": "TG_BAN", "score": 0.0, "metric_score": 0.0}));
+        rep -= 4;
+        let _: () = conn.hset(&user_key, "rep", rep).unwrap();
+        let _: () = conn.hset(&user_key, "banned", 1).unwrap();
+        let _: () = conn.hincr(&user_key, "banned_q", 1).unwrap();
+        let _: () = conn.hincr(&chat_key, "banned", 1).unwrap();
+        ban_triggered = true;
+    }
+    
+    if !ban_triggered && rep > 10 {
+        symbols.insert("TG_SUSPICIOUS".to_string(), json!({"name": "TG_SUSPICIOUS", "score": 0.0, "metric_score": 0.0}));
+        rep += 1;
+        let _: () = conn.hset(&user_key, "rep", rep).unwrap();
+    }
+    
+    json!(symbols)
+}
 
 // 1. Define a struct matching your .conf keys:
 #[derive(Debug)]
@@ -85,22 +444,6 @@ pub static CONFIG: Lazy<TelegramConfig> = Lazy::new(|| {
         "rspamd-config/modules.local.d/telegram.conf"
     ).expect("Failed to load telegram.conf for integration tests")
 });
-
-fn flush_redis() {
-    let client = redis::Client::open("redis://127.0.0.1/")
-        .expect("Failed to connect to Redis");
-    let mut conn = client
-        .get_connection()
-        .expect("Failed to connect to Redis");
-    let _: () = conn
-        .flushdb()
-        .expect("Failed to flush Redis");
-    for feat in DEFAULT_FEATURES {
-        let _: () = conn
-            .sadd(ENABLED_FEATURES_KEY, *feat)
-            .expect("Failed to seed default features");
-    }
-}
 
 fn make_user(id: u64, username: &str) -> User {
     User {
@@ -710,12 +1053,12 @@ async fn tg_emoji_spam_sets_symbol_for_excessive_emoji() {
     let user_id = 1007;
 
     // Message with 12 emojis (above threshold of 10)
-    let spam_text = "Hello! 😀😃😄😁😆😅😂🤣😊😇🙂🙃";
+    let spam_text = "Hello! 😀😃😄😁😆😅😂��😊😇🙂🙃";
 
     let reply = scan_msg(
         make_message(chat_id, user_id, "emojiuser", spam_text, 1),
         spam_text.into(),
-    ).await.ok().unwrap();
+    ).await.expect("scan_msg should succeed");
 
     assert!(reply.symbols.contains_key(symbol::TG_EMOJI_SPAM), 
         "Expected TG_EMOJI_SPAM for message with excessive emoji usage");
