@@ -50,6 +50,10 @@ RUN apt-get update && \
 
 # Копирование всех lua-файлов и settings.conf
 COPY rspamd-config/lua.local.d /etc/rspamd/lua.local.d/
+RUN mkdir -p /etc/rspamd/lua && \
+    cp -R /etc/rspamd/lua.local.d/telegram /etc/rspamd/lua/ && \
+    rm -f /etc/rspamd/lua.local.d/telegram.lua /etc/rspamd/lua.local.d/whiteblacklist.lua
+
 COPY rspamd-config/modules.local.d /etc/rspamd/modules.local.d/
 
 # Проверка конфигурации Rspamd на этапе сборки
