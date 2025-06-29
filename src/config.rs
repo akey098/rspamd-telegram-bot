@@ -24,7 +24,7 @@ pub mod suffix {
     pub const BOT_CHATS: &str = ":bot_chats";
     /// Suffix for a user's set of admin control chats (e.g. `"<user_id>:admin_chats"`).
     pub const ADMIN_CHATS: &str = ":admin_chats";
-    /// Suffix for an admin chat’s set of moderated chats (e.g. `"admin:<id>:moderated_chats"`).
+    /// Suffix for an admin chat's set of moderated chats (e.g. `"admin:<id>:moderated_chats"`).
     pub const MODERATED_CHATS: &str = ":moderated_chats";
     /// Suffix for admins of the chat
     pub const ADMINS: &str = ":admins";
@@ -70,6 +70,37 @@ pub mod symbol {
     pub const TG_BAN: &str = "TG_BAN";
     /// Symbol for permanently banned user (`TG_PERM_BAN`)
     pub const TG_PERM_BAN: &str = "TG_PERM_BAN";
+    
+    // Timing-based symbols
+    /// Symbol for first message too soon after joining (`TG_FIRST_FAST`).
+    pub const TG_FIRST_FAST: &str = "TG_FIRST_FAST";
+    /// Symbol for first message too long after joining (`TG_FIRST_SLOW`).
+    pub const TG_FIRST_SLOW: &str = "TG_FIRST_SLOW";
+    /// Symbol for dormant user returning after long silence (`TG_SILENT`).
+    pub const TG_SILENT: &str = "TG_SILENT";
+    
+    // Content-based symbols
+    /// Symbol for excessive links in message (`TG_LINK_SPAM`).
+    pub const TG_LINK_SPAM: &str = "TG_LINK_SPAM";
+    /// Symbol for excessive user mentions (`TG_MENTIONS`).
+    pub const TG_MENTIONS: &str = "TG_MENTIONS";
+    /// Symbol for excessive capital letters (`TG_CAPS`).
+    pub const TG_CAPS: &str = "TG_CAPS";
+    /// Symbol for excessive emoji usage (`TG_EMOJI_SPAM`).
+    pub const TG_EMOJI_SPAM: &str = "TG_EMOJI_SPAM";
+    
+    // Heuristic-based symbols
+    /// Symbol for Telegram invite links (`TG_INVITE_LINK`).
+    pub const TG_INVITE_LINK: &str = "TG_INVITE_LINK";
+    /// Symbol for phone number spam patterns (`TG_PHONE_SPAM`).
+    pub const TG_PHONE_SPAM: &str = "TG_PHONE_SPAM";
+    /// Symbol for spam chat links (`TG_SPAM_CHAT`).
+    pub const TG_SPAM_CHAT: &str = "TG_SPAM_CHAT";
+    /// Symbol for URL shortener links (`TG_SHORTENER`).
+    pub const TG_SHORTENER: &str = "TG_SHORTENER";
+    /// Symbol for gibberish text patterns (`TG_GIBBERISH`).
+    pub const TG_GIBBERISH: &str = "TG_GIBBERISH";
+    
     /// Symbol for whitelist of users
     pub const WHITELIST_USER: &str = "WHITELIST_USER";
     /// Symbol for blacklist of users

@@ -5,7 +5,7 @@
 //! crate-exported `scan_msg` helper, Redis through the `redis` crate.
 //
 //! Redis **must** be running on 127.0.0.1:6379
-//! Rspamd **must** be running on 127.0.0.1:11333 with the bot’s Lua rules.
+//! Rspamd **must** be running on 127.0.0.1:11333 with the bot's Lua rules.
 
 use std::time::Duration;
 
@@ -553,4 +553,336 @@ async fn blacklist_command_adds_entries() {
     let _ = handle_admin_command(bot, msg_word, AdminCommand::Blacklist { pattern: "word|add|spam".into() }).await;
     let words: Vec<String> = conn.smembers(key::TG_BLACKLIST_WORD_KEY).unwrap();
     assert!(words.contains(&"spam".to_string()));
+}
+
+// ============================================================================
+// NEW MODULAR SYMBOL INTEGRATION TESTS
+// ============================================================================
+
+#[tokio::test]
+#[serial]
+async fn tg_first_fast_sets_symbol_for_quick_first_message() {
+    flush_redis();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let chat_id = 8001;
+    let user_id = 1001;
+    let key = format!("{}{}", key::TG_USERS_PREFIX, user_id);
+
+    let client = redis::Client::open("redis://127.0.0.1/").unwrap();
+    let mut conn = client.get_connection().unwrap();
+    
+    // Set user as newly joined (within 10 seconds)
+    let join_time = Utc::now().timestamp() - 5; // 5 seconds ago
+    let _: () = conn.hset(key.clone(), "join_time", join_time).unwrap();
+
+    let reply = scan_msg(
+        make_message(chat_id, user_id, "newuser", "Hello everyone!", 1),
+        "Hello everyone!".into(),
+    ).await.ok().unwrap();
+
+    assert!(reply.symbols.contains_key(symbol::TG_FIRST_FAST), 
+        "Expected TG_FIRST_FAST for message within 10 seconds of joining");
+}
+
+#[tokio::test]
+#[serial]
+async fn tg_first_slow_sets_symbol_for_delayed_first_message() {
+    flush_redis();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let chat_id = 8002;
+    let user_id = 1002;
+    let key = format!("{}{}", key::TG_USERS_PREFIX, user_id);
+
+    let client = redis::Client::open("redis://127.0.0.1/").unwrap();
+    let mut conn = client.get_connection().unwrap();
+    
+    // Set user as joined long ago (more than 24 hours)
+    let join_time = Utc::now().timestamp() - 90000; // 25 hours ago
+    let _: () = conn.hset(key.clone(), "join_time", join_time).unwrap();
+
+    let reply = scan_msg(
+        make_message(chat_id, user_id, "olduser", "Finally saying hello!", 1),
+        "Finally saying hello!".into(),
+    ).await.ok().unwrap();
+
+    assert!(reply.symbols.contains_key(symbol::TG_FIRST_SLOW), 
+        "Expected TG_FIRST_SLOW for first message after 24 hours of joining");
+}
+
+#[tokio::test]
+#[serial]
+async fn tg_silent_sets_symbol_for_dormant_user() {
+    flush_redis();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let chat_id = 8003;
+    let user_id = 1003;
+    let key = format!("{}{}", key::TG_USERS_PREFIX, user_id);
+
+    let client = redis::Client::open("redis://127.0.0.1/").unwrap();
+    let mut conn = client.get_connection().unwrap();
+    
+    // Set user's last message time to 30+ days ago
+    let last_msg_time = Utc::now().timestamp() - 2600000; // 30+ days ago
+    let _: () = conn.hset(key.clone(), "last_msg_time", last_msg_time).unwrap();
+
+    let reply = scan_msg(
+        make_message(chat_id, user_id, "dormantuser", "I'm back!", 1),
+        "I'm back!".into(),
+    ).await.ok().unwrap();
+
+    assert!(reply.symbols.contains_key(symbol::TG_SILENT), 
+        "Expected TG_SILENT for dormant user returning after 30 days");
+}
+
+#[tokio::test]
+#[serial]
+async fn tg_link_spam_sets_symbol_for_excessive_links() {
+    flush_redis();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let chat_id = 8004;
+    let user_id = 1004;
+
+    // Message with 4 links (above threshold of 3)
+    let spam_text = "Check out these amazing sites: https://example1.com https://example2.com https://example3.com https://example4.com";
+
+    let reply = scan_msg(
+        make_message(chat_id, user_id, "linkuser", spam_text, 1),
+        spam_text.into(),
+    ).await.ok().unwrap();
+
+    assert!(reply.symbols.contains_key(symbol::TG_LINK_SPAM), 
+        "Expected TG_LINK_SPAM for message with excessive links");
+}
+
+#[tokio::test]
+#[serial]
+async fn tg_mentions_sets_symbol_for_excessive_mentions() {
+    flush_redis();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let chat_id = 8005;
+    let user_id = 1005;
+
+    // Message with 6 mentions (above threshold of 5)
+    let spam_text = "@user1 @user2 @user3 @user4 @user5 @user6 Hey everyone!";
+
+    let reply = scan_msg(
+        make_message(chat_id, user_id, "mentionuser", spam_text, 1),
+        spam_text.into(),
+    ).await.ok().unwrap();
+
+    assert!(reply.symbols.contains_key(symbol::TG_MENTIONS), 
+        "Expected TG_MENTIONS for message with excessive user mentions");
+}
+
+#[tokio::test]
+#[serial]
+async fn tg_caps_sets_symbol_for_excessive_capitalization() {
+    flush_redis();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let chat_id = 8006;
+    let user_id = 1006;
+
+    // Message with 80% caps (above threshold of 70%)
+    let spam_text = "HELLO EVERYONE THIS IS VERY IMPORTANT NEWS YOU MUST READ THIS NOW!";
+
+    let reply = scan_msg(
+        make_message(chat_id, user_id, "capsuser", spam_text, 1),
+        spam_text.into(),
+    ).await.ok().unwrap();
+
+    assert!(reply.symbols.contains_key(symbol::TG_CAPS), 
+        "Expected TG_CAPS for message with excessive capitalization");
+}
+
+#[tokio::test]
+#[serial]
+async fn tg_emoji_spam_sets_symbol_for_excessive_emoji() {
+    flush_redis();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let chat_id = 8007;
+    let user_id = 1007;
+
+    // Message with 12 emojis (above threshold of 10)
+    let spam_text = "Hello! 😀😃😄😁😆😅😂🤣😊😇🙂🙃";
+
+    let reply = scan_msg(
+        make_message(chat_id, user_id, "emojiuser", spam_text, 1),
+        spam_text.into(),
+    ).await.ok().unwrap();
+
+    assert!(reply.symbols.contains_key(symbol::TG_EMOJI_SPAM), 
+        "Expected TG_EMOJI_SPAM for message with excessive emoji usage");
+}
+
+#[tokio::test]
+#[serial]
+async fn tg_invite_link_sets_symbol_for_telegram_invites() {
+    flush_redis();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let chat_id = 8008;
+    let user_id = 1008;
+
+    // Message with Telegram invite link
+    let spam_text = "Join our amazing group: https://t.me/joinchat/ABC123";
+
+    let reply = scan_msg(
+        make_message(chat_id, user_id, "inviteuser", spam_text, 1),
+        spam_text.into(),
+    ).await.ok().unwrap();
+
+    assert!(reply.symbols.contains_key(symbol::TG_INVITE_LINK), 
+        "Expected TG_INVITE_LINK for message with Telegram invite link");
+}
+
+#[tokio::test]
+#[serial]
+async fn tg_phone_spam_sets_symbol_for_phone_patterns() {
+    flush_redis();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let chat_id = 8009;
+    let user_id = 1009;
+
+    // Message with phone number pattern
+    let spam_text = "Call me at +1-555-123-4567 for amazing deals!";
+
+    let reply = scan_msg(
+        make_message(chat_id, user_id, "phoneuser", spam_text, 1),
+        spam_text.into(),
+    ).await.ok().unwrap();
+
+    assert!(reply.symbols.contains_key(symbol::TG_PHONE_SPAM), 
+        "Expected TG_PHONE_SPAM for message with phone number pattern");
+}
+
+#[tokio::test]
+#[serial]
+async fn tg_spam_chat_sets_symbol_for_spam_chat_links() {
+    flush_redis();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let chat_id = 8010;
+    let user_id = 1010;
+
+    // Message with spam chat link
+    let spam_text = "Check out this chat: https://t.me/joinchat/spamchat123";
+
+    let reply = scan_msg(
+        make_message(chat_id, user_id, "spamchatuser", spam_text, 1),
+        spam_text.into(),
+    ).await.ok().unwrap();
+
+    assert!(reply.symbols.contains_key(symbol::TG_SPAM_CHAT), 
+        "Expected TG_SPAM_CHAT for message with spam chat link");
+}
+
+#[tokio::test]
+#[serial]
+async fn tg_shortener_sets_symbol_for_url_shorteners() {
+    flush_redis();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let chat_id = 8011;
+    let user_id = 1011;
+
+    // Message with URL shortener
+    let spam_text = "Check this out: https://bit.ly/amazing-deal";
+
+    let reply = scan_msg(
+        make_message(chat_id, user_id, "shorteneruser", spam_text, 1),
+        spam_text.into(),
+    ).await.ok().unwrap();
+
+    assert!(reply.symbols.contains_key(symbol::TG_SHORTENER), 
+        "Expected TG_SHORTENER for message with URL shortener");
+}
+
+#[tokio::test]
+#[serial]
+async fn tg_gibberish_sets_symbol_for_random_consonants() {
+    flush_redis();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let chat_id = 8012;
+    let user_id = 1012;
+
+    // Message with long sequence of random consonants
+    let spam_text = "KXJQZWVBNMLPQRSTUVWXYZKXJQZWVBNMLPQRSTUVWXYZKXJQZWVBNMLPQRSTUVWXYZ";
+
+    let reply = scan_msg(
+        make_message(chat_id, user_id, "gibberishuser", spam_text, 1),
+        spam_text.into(),
+    ).await.ok().unwrap();
+
+    assert!(reply.symbols.contains_key(symbol::TG_GIBBERISH), 
+        "Expected TG_GIBBERISH for message with gibberish text");
+}
+
+#[tokio::test]
+#[serial]
+async fn multiple_symbols_can_trigger_simultaneously() {
+    flush_redis();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let chat_id = 8013;
+    let user_id = 1013;
+
+    // Message that should trigger multiple symbols
+    let spam_text = "HELLO EVERYONE! 😀😃😄😁😆😅😂🤣😊😇🙂🙃 @user1 @user2 @user3 @user4 @user5 @user6 Check out: https://t.me/joinchat/ABC123 https://bit.ly/deal";
+
+    let reply = scan_msg(
+        make_message(chat_id, user_id, "multiuser", spam_text, 1),
+        spam_text.into(),
+    ).await.ok().unwrap();
+
+    // Should trigger multiple symbols
+    let triggered_symbols: Vec<&str> = reply.symbols.keys().map(|s| s.as_str()).collect();
+    
+    assert!(triggered_symbols.contains(&symbol::TG_CAPS), "Expected TG_CAPS");
+    assert!(triggered_symbols.contains(&symbol::TG_EMOJI_SPAM), "Expected TG_EMOJI_SPAM");
+    assert!(triggered_symbols.contains(&symbol::TG_MENTIONS), "Expected TG_MENTIONS");
+    assert!(triggered_symbols.contains(&symbol::TG_INVITE_LINK), "Expected TG_INVITE_LINK");
+    assert!(triggered_symbols.contains(&symbol::TG_SHORTENER), "Expected TG_SHORTENER");
+    
+    // Verify we have at least 5 symbols triggered
+    assert!(triggered_symbols.len() >= 5, "Expected at least 5 symbols to be triggered");
+}
+
+#[tokio::test]
+#[serial]
+async fn normal_messages_dont_trigger_new_symbols() {
+    flush_redis();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let chat_id = 8014;
+    let user_id = 1014;
+
+    // Normal, legitimate message
+    let normal_text = "Hello everyone! How are you doing today? It's a beautiful day.";
+
+    let reply = scan_msg(
+        make_message(chat_id, user_id, "normaluser", normal_text, 1),
+        normal_text.into(),
+    ).await.ok().unwrap();
+
+    // Should not trigger any of the new content-based symbols
+    let triggered_symbols: Vec<&str> = reply.symbols.keys().map(|s| s.as_str()).collect();
+    
+    assert!(!triggered_symbols.contains(&symbol::TG_LINK_SPAM), "Normal message should not trigger TG_LINK_SPAM");
+    assert!(!triggered_symbols.contains(&symbol::TG_MENTIONS), "Normal message should not trigger TG_MENTIONS");
+    assert!(!triggered_symbols.contains(&symbol::TG_CAPS), "Normal message should not trigger TG_CAPS");
+    assert!(!triggered_symbols.contains(&symbol::TG_EMOJI_SPAM), "Normal message should not trigger TG_EMOJI_SPAM");
+    assert!(!triggered_symbols.contains(&symbol::TG_INVITE_LINK), "Normal message should not trigger TG_INVITE_LINK");
+    assert!(!triggered_symbols.contains(&symbol::TG_PHONE_SPAM), "Normal message should not trigger TG_PHONE_SPAM");
+    assert!(!triggered_symbols.contains(&symbol::TG_SPAM_CHAT), "Normal message should not trigger TG_SPAM_CHAT");
+    assert!(!triggered_symbols.contains(&symbol::TG_SHORTENER), "Normal message should not trigger TG_SHORTENER");
+    assert!(!triggered_symbols.contains(&symbol::TG_GIBBERISH), "Normal message should not trigger TG_GIBBERISH");
 }

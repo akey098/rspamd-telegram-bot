@@ -37,6 +37,8 @@ jobs:
           sudo mkdir -p /etc/rspamd/lua.local.d
           sudo mkdir -p /etc/rspamd/lua
           sudo cp -R rspamd-config/lua.local.d/. /etc/rspamd/lua.local.d/
+          sudo rm -f /etc/rspamd/lua.local.d/telegram.lua
+          sudo rm -f /etc/rspamd/lua.local.d/whiteblacklist.lua
           sudo cp -R rspamd-config/lua.local.d/telegram /etc/rspamd/lua/
           sudo rspamadm configtest
 
