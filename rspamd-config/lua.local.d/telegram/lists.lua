@@ -6,7 +6,7 @@
   - Word whitelist/blacklist
 ]]
 
-local utils = require "lua.local.d.telegram.utils"
+local utils = require "telegram.utils"
 
 -- Initialize Redis connection
 if not utils.init_redis('whiteblacklist') then

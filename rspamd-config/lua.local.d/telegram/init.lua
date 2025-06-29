@@ -49,17 +49,17 @@ local settings = {
 _G.telegram_settings = settings
 
 -- Load all submodules
-require "lua.local.d.telegram.utils"
-require "lua.local.d.telegram.core"
-require "lua.local.d.telegram.content"
-require "lua.local.d.telegram.timing"
-require "lua.local.d.telegram.lists"
-require "lua.local.d.telegram.heuristics"
+require "telegram.utils"
+require "telegram.core"
+require "telegram.content"
+require "telegram.timing"
+require "telegram.lists"
+require "telegram.heuristics"
 
 -- Export common utilities for other modules
 local M = {}
 
 -- Shared Redis utilities
-M.redis_utils = require "lua.local.d.telegram.utils"
+M.redis_utils = require "telegram.utils"
 
 return M 

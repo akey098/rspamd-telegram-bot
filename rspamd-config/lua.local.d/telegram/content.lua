@@ -7,7 +7,7 @@
   - Excessive capitalization
 ]]
 
-local utils = require "lua.local.d.telegram.utils"
+local utils = require "telegram.utils"
 local settings = _G.telegram_settings
 
 -- Initialize Redis connection

@@ -7,4 +7,4 @@
 ]]
 
 -- Load the modular telegram rules
-require "lua.local.d.telegram.init" 
+require "telegram.init" 
