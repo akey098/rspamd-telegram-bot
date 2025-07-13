@@ -1,6 +1,7 @@
 #!/bin/bash
 
-set -e
+# Remove set -e to see errors
+# set -e
 
 service redis-server start
 
@@ -25,6 +26,11 @@ ls /etc/rspamd/lua.local.d/
 service rspamd restart
 
 rspamadm configtest
+
+echo "About to start the bot..."
+echo "Bot binary exists: $(ls -la /usr/local/bin/rspamd-telegram-bot)"
+echo "Current environment:"
+env | grep -E "(TELOXIDE|RUST)" || echo "No TELOXIDE or RUST env vars found"
 
 exec /usr/local/bin/rspamd-telegram-bot
 echo "Telegram bot started"

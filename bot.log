@@ -1,0 +1,10 @@
+Cleaning ports…
+Starting redis-server: redis-server.
+Redis is up!
+module.lua.example
+telegram
+telegram_modular.lua
+Restarting rapid spam filtering system: rspamd2025-07-06 16:48:12 #40(main) <331dd8>; main; main: rspamd 3.12.1 is loading configuration, build id: release
+.
+syntax OK
+dummy

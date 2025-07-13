@@ -8,6 +8,7 @@ use rspamd_telegram_bot::admin_handlers;
 
 #[tokio::main]
 async fn main() {
+    println!("=== REAL TELEGRAM BOT STARTING ===");
     pretty_env_logger::init();
     log::info!("Starting the spam detection bot...");
 

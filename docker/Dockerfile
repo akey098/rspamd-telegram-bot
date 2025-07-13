@@ -20,8 +20,6 @@ RUN mkdir src && \
 
 # Copy all sources and rebuild the actual bot
 COPY src/ ./src/
-COPY Cargo.toml ./
-COPY Cargo.lock ./
 COPY rspamd-config/ ./rspamd-config/
 COPY docker/entrypoint.sh /entrypoint.sh
 RUN cargo build --release
