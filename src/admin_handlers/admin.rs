@@ -510,9 +510,7 @@ pub async fn handle_admin_command(bot: Bot, msg: Message, cmd: AdminCommand) -> 
                     }
                 }
             }
-            AdminCommand::FuzzyAdd => {
-                handle_fuzzy_add(&bot, msg.clone()).await?;
-            }
+
         }
     } else {
         bot.send_message(chat_id, "You are not admin").await?;
