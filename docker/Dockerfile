@@ -22,7 +22,10 @@ RUN mkdir src && \
 COPY src/ ./src/
 COPY rspamd-config/ ./rspamd-config/
 COPY docker/entrypoint.sh /entrypoint.sh
-RUN cargo build --release
+# Force rebuild by ensuring Cargo files are fresh
+COPY Cargo.toml Cargo.lock ./
+# Force rebuild by adding a timestamp
+RUN echo "Building real bot at $(date)" && cargo build --release
 RUN ls -l /usr/src/app/target/release/
 RUN apt-get update && apt-get install -y --no-install-recommends file && file /usr/src/app/target/release/rspamd-telegram-bot
 
