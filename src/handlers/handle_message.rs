@@ -16,7 +16,13 @@ pub async fn handle_message(
         return Ok(());
     };
     let result = scan_msg(message.clone(), text).await;
-    let scan_result = result.ok().unwrap();
+    let scan_result = match result {
+        Ok(scan_result) => scan_result,
+        Err(e) => {
+            eprintln!("Failed to scan message: {}", e);
+            return Ok(());
+        }
+    };
     let redis_client =
         redis::Client::open("redis://127.0.0.1/").expect("Failed to connect to Redis");
     let mut redis_conn = redis_client

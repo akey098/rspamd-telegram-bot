@@ -11,6 +11,9 @@ if not lua_redis then
     return
 end
 
+-- Load logger for debugging
+local rspamd_logger = require "rspamd_logger"
+
 -- Shared settings
 local settings = {
     -- Core settings
@@ -45,6 +48,7 @@ local settings = {
 -- Initialize Redis connection
 local redis_params = lua_redis.parse_redis_server('telegram')
 if not redis_params then
+    rspamd_logger.errx(nil, 'Failed to parse Redis server for telegram module')
     return
 end
 
@@ -75,7 +79,10 @@ local function tg_flood_cb(task)
     local user_key = settings.user_prefix .. user_id
     
     local function flood_cb(err, data)
-        if err then return end
+        if err then 
+            rspamd_logger.errx(task, 'flood_cb error: %1', err)
+            return 
+        end
         
         local count = safe_num(data)
         lua_redis.redis_make_request(task,
@@ -105,7 +112,8 @@ local function tg_flood_cb(task)
                 'HINCRBY',
                 {user_key, 'rep', '1'}
             )
-            task:insert_result('TG_FLOOD', 1.2)
+            task:insert_result('TG_FLOOD')
+            rspamd_logger.infox(task, 'TG_FLOOD triggered for user %1, count: %2', user_id, count)
         end
     end
     
@@ -126,7 +134,8 @@ local function tg_link_spam_cb(task)
 
     local urls = task:get_urls() or {}
     if #urls >= settings.link_spam then
-        task:insert_result('TG_LINK_SPAM', 2.5)
+        task:insert_result('TG_LINK_SPAM')
+        rspamd_logger.infox(task, 'TG_LINK_SPAM triggered, URLs: %1', #urls)
     end
 end
 
@@ -140,7 +149,8 @@ local function tg_mentions_cb(task)
     end
     
     if n >= settings.mentions then
-        task:insert_result('TG_MENTIONS', 2.5)
+        task:insert_result('TG_MENTIONS')
+        rspamd_logger.infox(task, 'TG_MENTIONS triggered, mentions: %1', n)
     end
 end
 
@@ -159,7 +169,8 @@ local function tg_caps_cb(task)
     end
     
     if letters > 0 and (caps / letters) >= settings.caps_ratio then
-        task:insert_result('TG_CAPS', 1.5)
+        task:insert_result('TG_CAPS')
+        rspamd_logger.infox(task, 'TG_CAPS triggered, caps ratio: %1', caps/letters)
     end
 end
 
@@ -186,4 +197,7 @@ rspamd_config.TG_CAPS = {
     callback = tg_caps_cb,
     description = 'Message is written almost entirely in capital letters',
     group = 'telegram_content'
-} 
+}
+
+-- Log that symbols are registered
+rspamd_logger.infox(rspamd_config, 'Telegram symbols registered: TG_FLOOD, TG_LINK_SPAM, TG_MENTIONS, TG_CAPS') 
