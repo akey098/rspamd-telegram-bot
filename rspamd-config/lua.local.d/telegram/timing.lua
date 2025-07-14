@@ -17,6 +17,12 @@ end
 
 local redis_params = utils.get_redis_params()
 
+-- Check if lua_redis is available
+local lua_redis = require "lua_redis"
+if not lua_redis then
+    return
+end
+
 -- TG_TIMING: Handle all timing-related heuristics
 local function tg_timing_cb(task)
     local user_id, _ = utils.get_user_chat_ids(task)

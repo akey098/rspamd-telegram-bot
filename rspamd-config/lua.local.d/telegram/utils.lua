@@ -13,6 +13,10 @@ local redis_params
 
 -- Initialize Redis connection
 function M.init_redis(module_name)
+    if not lua_redis then
+        rspamd_logger.errx(nil, 'lua_redis module not available')
+        return false
+    end
     redis_params = lua_redis.parse_redis_server(module_name)
     return redis_params ~= nil
 end
@@ -24,6 +28,10 @@ end
 
 -- Feature flag checker
 function M.if_feature_enabled(task, chat_id, feature, cb)
+    if not lua_redis or not redis_params then
+        return
+    end
+    
     local chat_key = 'tg:chats:' .. chat_id
     local field = 'feat:' .. feature
     

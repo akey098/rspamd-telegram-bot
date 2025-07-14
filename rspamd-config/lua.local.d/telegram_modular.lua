@@ -1,10 +1,10 @@
 --[[
   Telegram Bot Rspamd Rules - Modular Entry Point
   
-  This file loads the modular telegram rules structure.
-  It replaces the monolithic telegram.lua with a cleaner, 
-  more maintainable modular approach.
+  This file loads the simplified telegram rules structure.
+  The complex modular structure has been replaced with a simpler
+  approach that avoids module loading issues.
 ]]
 
--- Load the modular telegram rules
-require "telegram.init" 
+-- Load the simple telegram rules
+dofile("/etc/rspamd/lua.local.d/telegram_simple.lua") 

@@ -18,6 +18,12 @@ end
 
 local redis_params = utils.get_redis_params()
 
+-- Check if lua_redis is available
+local lua_redis = require "lua_redis"
+if not lua_redis then
+    return
+end
+
 -- TG_FLOOD: Detect message flooding
 local function tg_flood_cb(task)
     local user_id, chat_id = utils.get_user_chat_ids(task)

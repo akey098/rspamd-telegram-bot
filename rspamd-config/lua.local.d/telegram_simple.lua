@@ -1,0 +1,189 @@
+--[[
+  Simple Telegram Bot Rspamd Rules
+  
+  This is a simplified version that loads all telegram rules directly
+  without complex module dependencies.
+]]
+
+-- Load lua_redis module
+local lua_redis = require "lua_redis"
+if not lua_redis then
+    return
+end
+
+-- Shared settings
+local settings = {
+    -- Core settings
+    flood = 30,
+    repeated = 6,
+    suspicious = 10,
+    ban = 20,
+    user_prefix = 'tg:users:',
+    chat_prefix = 'tg:chats:',
+    exp_flood = '60',
+    exp_ban = '3600',
+    banned_q = 3,
+    
+    -- Content thresholds
+    link_spam = 3,
+    mentions = 5,
+    caps_ratio = 0.7,
+    emoji_limit = 10,
+    
+    -- Timing heuristics (seconds)
+    join_fast  = 10,
+    join_slow  = 86400,
+    silence    = 2592000,
+    
+    -- Pattern matching
+    invite_link_patterns = {'t.me/joinchat', 't.me/+', 'telegram.me/joinchat'},
+    phone_regex = '%+?%d[%d%-%s%(%)]%d%d%d%d',
+    spam_chat_regex = 't.me/joinchat',
+    shorteners = {'bit%.ly', 't%.co', 'goo%.gl', 'tinyurl%.com', 'is%.gd', 'ow%.ly'},
+}
+
+-- Initialize Redis connection
+local redis_params = lua_redis.parse_redis_server('telegram')
+if not redis_params then
+    return
+end
+
+-- Utility functions
+local function safe_str(val)
+    return tostring(val or "")
+end
+
+local function safe_num(val, default)
+    return tonumber(val) or (default or 0)
+end
+
+local function get_user_chat_ids(task)
+    local user_id = safe_str(task:get_header('X-Telegram-User', true))
+    local chat_id = safe_str(task:get_header('X-Telegram-Chat', true))
+    return user_id, chat_id
+end
+
+local function get_message_text(task)
+    return safe_str(task:get_rawbody())
+end
+
+-- TG_FLOOD: Detect message flooding
+local function tg_flood_cb(task)
+    local user_id, chat_id = get_user_chat_ids(task)
+    if user_id == "" then return end
+    
+    local user_key = settings.user_prefix .. user_id
+    
+    local function flood_cb(err, data)
+        if err then return end
+        
+        local count = safe_num(data)
+        lua_redis.redis_make_request(task,
+            redis_params,
+            user_key,
+            true, -- is write
+            function() end,
+            'HEXPIRE',
+            {user_key, settings.exp_flood, 'NX', 'FIELDS', 1, 'flood'}
+        )
+        
+        if count > settings.flood then
+            local chat_key = settings.chat_prefix .. chat_id
+            lua_redis.redis_make_request(task,
+                redis_params,
+                chat_key,
+                true, -- is write
+                function() end,
+                'HINCRBY',
+                {chat_key, 'spam_count', '1'}
+            )
+            lua_redis.redis_make_request(task,
+                redis_params,
+                user_key,
+                true, -- is write
+                function() end,
+                'HINCRBY',
+                {user_key, 'rep', '1'}
+            )
+            task:insert_result('TG_FLOOD', 1.2)
+        end
+    end
+    
+    lua_redis.redis_make_request(task,
+        redis_params,
+        user_key,
+        true, -- is write
+        flood_cb,
+        'HINCRBY',
+        {user_key, 'flood', 1}
+    )
+end
+
+-- TG_LINK_SPAM: Detect excessive URLs
+local function tg_link_spam_cb(task)
+    local _, chat_id = get_user_chat_ids(task)
+    if chat_id == "" then return end
+
+    local urls = task:get_urls() or {}
+    if #urls >= settings.link_spam then
+        task:insert_result('TG_LINK_SPAM', 2.5)
+    end
+end
+
+-- TG_MENTIONS: Detect excessive user mentions
+local function tg_mentions_cb(task)
+    local text = get_message_text(task)
+    
+    local n = 0
+    for _ in text:gmatch("@[%w_]+") do 
+        n = n + 1 
+    end
+    
+    if n >= settings.mentions then
+        task:insert_result('TG_MENTIONS', 2.5)
+    end
+end
+
+-- TG_CAPS: Detect excessive capital letters
+local function tg_caps_cb(task)
+    local text = get_message_text(task)
+    
+    if #text < 20 then return end
+
+    local letters, caps = 0, 0
+    for ch in text:gmatch("%a") do
+        letters = letters + 1
+        if ch:match("%u") then 
+            caps = caps + 1 
+        end
+    end
+    
+    if letters > 0 and (caps / letters) >= settings.caps_ratio then
+        task:insert_result('TG_CAPS', 1.5)
+    end
+end
+
+-- Register symbols
+rspamd_config.TG_FLOOD = {
+    callback = tg_flood_cb,
+    description = 'User is flooding',
+    group = 'telegram_core'
+}
+
+rspamd_config.TG_LINK_SPAM = {
+    callback = tg_link_spam_cb,
+    description = 'Message contains excessive number of links',
+    group = 'telegram_content'
+}
+
+rspamd_config.TG_MENTIONS = {
+    callback = tg_mentions_cb,
+    description = 'Message mentions too many users',
+    group = 'telegram_content'
+}
+
+rspamd_config.TG_CAPS = {
+    callback = tg_caps_cb,
+    description = 'Message is written almost entirely in capital letters',
+    group = 'telegram_content'
+} 

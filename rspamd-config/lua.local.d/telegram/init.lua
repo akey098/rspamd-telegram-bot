@@ -48,13 +48,13 @@ local settings = {
 -- Export settings globally for other modules
 _G.telegram_settings = settings
 
--- Load all submodules
-require "telegram.utils"
-require "telegram.core"
-require "telegram.content"
-require "telegram.timing"
-require "telegram.lists"
-require "telegram.heuristics"
+-- Load all submodules using dofile for proper path resolution
+dofile("/etc/rspamd/lua/telegram/utils.lua")
+dofile("/etc/rspamd/lua/telegram/core.lua")
+dofile("/etc/rspamd/lua/telegram/content.lua")
+dofile("/etc/rspamd/lua/telegram/timing.lua")
+dofile("/etc/rspamd/lua/telegram/lists.lua")
+dofile("/etc/rspamd/lua/telegram/heuristics.lua")
 
 -- Export common utilities for other modules
 local M = {}

@@ -15,6 +15,12 @@ end
 
 local redis_params = utils.get_redis_params()
 
+-- Check if lua_redis is available
+local lua_redis = require "lua_redis"
+if not lua_redis then
+    return
+end
+
 -- List settings
 local list_settings = {
     whitelist_users_key = 'tg:whitelist:users',
