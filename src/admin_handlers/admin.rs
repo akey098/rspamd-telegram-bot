@@ -236,7 +236,7 @@ pub async fn handle_admin_command(bot: Bot, msg: Message, cmd: AdminCommand) -> 
                         .expect("Failed to get chat name");
                     rows.push(vec![InlineKeyboardButton::callback(
                         format!("Chat: {}", chat_name),
-                        format!("makeadmin:{}", chat_id),
+                        format!("makeadmin:{}", chat),
                     )]);
                 }
                 let keyboard = InlineKeyboardMarkup::new(rows);
@@ -325,7 +325,7 @@ pub async fn handle_admin_command(bot: Bot, msg: Message, cmd: AdminCommand) -> 
                             .expect("Failed to get chat name");
                         rows.push(vec![InlineKeyboardButton::callback(
                             format!("Chat: {}", chat_name),
-                            format!("stats:{}", chat_id),
+                            format!("stats:{}", chat),
                         )]);
                     }
                     let keyboard = InlineKeyboardMarkup::new(rows);

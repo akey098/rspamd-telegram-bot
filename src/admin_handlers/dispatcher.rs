@@ -75,49 +75,30 @@ pub async fn stats_handler(bot: Bot, query: CallbackQuery) -> Result<(), Request
     if let Some(callback_data) = query.data {
         if let Some(admin_chat) = query.message {
             let admin_id = admin_chat.chat().id;
-            let selected_chat: i64 = callback_data["makeadmin:".len()..].parse().unwrap();
+            let selected_chat: i64 = callback_data["stats:".len()..].parse().unwrap();
             let redis_client =
                 redis::Client::open("redis://127.0.0.1/").expect("Failed to connect to Redis");
             let mut redis_conn = redis_client
                 .get_connection()
                 .expect("Failed to get Redis connection");
-            if selected_chat != 0 {
-                let stats: HashMap<String, String> = redis_conn
-                    .hgetall(format!("{}{}", key::TG_CHATS_PREFIX, selected_chat))
-                    .expect("Failed to get chat stats");
-                let mut response = String::new();
-                for (field, value) in stats {
-                    if field == field::NAME || field == field::ADMIN_CHAT {
-                        continue;
-                    }
-                    writeln!(&mut response, "{}: {}", field, value).unwrap();
+            
+            // Get the chat name for the response
+            let chat_name: String = redis_conn
+                .hget(format!("{}{}", key::TG_CHATS_PREFIX, selected_chat), field::NAME)
+                .unwrap_or_else(|_| selected_chat.to_string());
+            
+            let stats: HashMap<String, String> = redis_conn
+                .hgetall(format!("{}{}", key::TG_CHATS_PREFIX, selected_chat))
+                .expect("Failed to get chat stats");
+            let mut response = String::new();
+            writeln!(&mut response, "Stats for chat: {}", chat_name).unwrap();
+            for (field, value) in stats {
+                if field == field::NAME || field == field::ADMIN_CHAT {
+                    continue;
                 }
-                bot.send_message(admin_id, response).await?;
-            } else {
-                let chats: Vec<i64> = redis_conn
-                    .smembers(format!("{}{}{}", key::ADMIN_PREFIX, admin_id, suffix::MODERATED_CHATS))
-                    .expect("Failed to get moderated chats");
-                let mut total_stats: HashMap<String, i64> = HashMap::new();
-                for chat in chats {
-                    let chat_stats: HashMap<String, String> = redis_conn
-                        .hgetall(format!("{}{}", key::TG_CHATS_PREFIX, chat))
-                        .expect("Failed to get chat stats");
-                
-                    for (key, value_str) in chat_stats {
-                        if key == field::NAME || key == field::ADMIN_CHAT {
-                            continue;
-                        }
-                        if let Ok(value) = value_str.parse::<i64>() {
-                            *total_stats.entry(key).or_insert(0) += value;
-                        }
-                    }
-                }
-                let mut resp = String::new();
-                for (k, v) in total_stats {
-                    writeln!(&mut resp, "{}: {}", k, v).unwrap();
-                }
-                bot.send_message(admin_id, resp).await?;
+                writeln!(&mut response, "{}: {}", field, value).unwrap();
             }
+            bot.send_message(admin_id, response).await?;
         }
     }
     Ok(())
@@ -438,14 +419,14 @@ pub async fn run_dispatcher(bot: Bot) {
         .branch(Update::filter_message().endpoint(message_handler))
         .branch(
             Update::filter_callback_query()
-                .filter(|q: &CallbackQuery| {
+                .filter(|q: CallbackQuery| {
                     q.data.as_deref().map(|s| s.starts_with("makeadmin:")).unwrap_or(false)
                 })
                 .endpoint(makeadmin_handler),
         )
         .branch(
             Update::filter_callback_query()
-                .filter(|q: &CallbackQuery| {
+                .filter(|q: CallbackQuery| {
                     q.data.as_deref().map(|s| s.starts_with("stats:")).unwrap_or(false)
                 })
                 .endpoint(stats_handler),
@@ -453,7 +434,7 @@ pub async fn run_dispatcher(bot: Bot) {
         .branch(
             // When admin chooses a chat to manage features:
             Update::filter_callback_query()
-                .filter(|q: &CallbackQuery| {
+                .filter(|q: CallbackQuery| {
                     q.data
                         .as_deref()
                         .map(|s| s.starts_with("managefeat:"))
@@ -464,7 +445,7 @@ pub async fn run_dispatcher(bot: Bot) {
         .branch(
             // When admin toggles a single feature on/off:
             Update::filter_callback_query()
-                .filter(|q: &CallbackQuery| {
+                .filter(|q: CallbackQuery| {
                     q.data
                         .as_deref()
                         .map(|s| s.starts_with("togglefeat:"))
@@ -475,7 +456,7 @@ pub async fn run_dispatcher(bot: Bot) {
         .branch(
             // When admin discards:
             Update::filter_callback_query()
-                .filter(|q: &CallbackQuery| {
+                .filter(|q: CallbackQuery| {
                     q.data
                         .as_deref()
                         .map(|s| s.starts_with("discard:"))
