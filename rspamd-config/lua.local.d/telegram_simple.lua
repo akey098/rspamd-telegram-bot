@@ -158,7 +158,12 @@ end
 local function tg_caps_cb(task)
     local text = get_message_text(task)
     
-    if #text < 20 then return end
+    rspamd_logger.infox(task, 'TG_CAPS: Processing message, length: %1', #text)
+    
+    if #text < 20 then 
+        rspamd_logger.infox(task, 'TG_CAPS: Message too short, skipping')
+        return 
+    end
 
     local letters, caps = 0, 0
     for ch in text:gmatch("%a") do
@@ -168,9 +173,13 @@ local function tg_caps_cb(task)
         end
     end
     
+    rspamd_logger.infox(task, 'TG_CAPS: Letters: %1, Caps: %2, Ratio: %3', letters, caps, letters > 0 and (caps/letters) or 0)
+    
     if letters > 0 and (caps / letters) >= settings.caps_ratio then
-        task:insert_result('TG_CAPS')
+        task:insert_result('TG_CAPS', 1.5)
         rspamd_logger.infox(task, 'TG_CAPS triggered, caps ratio: %1', caps/letters)
+    else
+        rspamd_logger.infox(task, 'TG_CAPS: Not triggered, ratio %1 < threshold %2', caps/letters, settings.caps_ratio)
     end
 end
 
@@ -199,5 +208,15 @@ rspamd_config.TG_CAPS = {
     group = 'telegram_content'
 }
 
+-- TEST_RULE: Simple test rule to verify Lua loading
+rspamd_config.TEST_RULE = {
+    callback = function(task)
+        rspamd_logger.infox(task, 'TEST_RULE: This is a test rule - Lua modules are loaded!')
+        task:insert_result('TEST_RULE', 1.0)
+    end,
+    description = 'Test rule to verify Lua loading',
+    group = 'telegram_content'
+}
+
 -- Log that symbols are registered
-rspamd_logger.infox(rspamd_config, 'Telegram symbols registered: TG_FLOOD, TG_LINK_SPAM, TG_MENTIONS, TG_CAPS') 
+rspamd_logger.infox(rspamd_config, 'Telegram symbols registered: TG_FLOOD, TG_LINK_SPAM, TG_MENTIONS, TG_CAPS, TEST_RULE') 
