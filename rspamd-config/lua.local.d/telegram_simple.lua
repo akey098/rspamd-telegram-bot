@@ -186,24 +186,28 @@ end
 -- Register symbols
 rspamd_config.TG_FLOOD = {
     callback = tg_flood_cb,
+    score = 1.2,
     description = 'User is flooding',
     group = 'telegram_core'
 }
 
 rspamd_config.TG_LINK_SPAM = {
     callback = tg_link_spam_cb,
+    score = 2.5,
     description = 'Message contains excessive number of links',
     group = 'telegram_content'
 }
 
 rspamd_config.TG_MENTIONS = {
     callback = tg_mentions_cb,
+    score = 2.5,
     description = 'Message mentions too many users',
     group = 'telegram_content'
 }
 
 rspamd_config.TG_CAPS = {
     callback = tg_caps_cb,
+    score = 1.5,
     description = 'Message is written almost entirely in capital letters',
     group = 'telegram_content'
 }
@@ -214,6 +218,7 @@ rspamd_config.TEST_RULE = {
         rspamd_logger.infox(task, 'TEST_RULE: This is a test rule - Lua modules are loaded!')
         task:insert_result('TEST_RULE', 1.0)
     end,
+    score = 1.0,
     description = 'Test rule to verify Lua loading',
     group = 'telegram_content'
 }
