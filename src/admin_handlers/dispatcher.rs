@@ -10,7 +10,7 @@ use teloxide::types::{BotCommand, ChatKind, ChatMemberStatus, InlineKeyboardButt
 use teloxide::utils::command::BotCommands;
 use teloxide::{Bot, RequestError};
 use std::fmt::Write;
-use crate::config::{field, key, suffix, DEFAULT_FEATURES, ALL_AVAILABLE_FEATURES, ENABLED_FEATURES_KEY};
+use crate::config::{field, key, suffix, DEFAULT_FEATURES, ENABLED_FEATURES_KEY};
 
 pub async fn message_handler(bot: Bot, msg: Message) -> Result<(), RequestError> {
     if let Some(text) = msg.text() {
@@ -136,7 +136,7 @@ pub async fn manage_features_select_chat(
                 let mut rows: Vec<Vec<InlineKeyboardButton>> = Vec::new();
 
                 // Show all available features, not just the ones already in Redis
-                let feats: Vec<String> = ALL_AVAILABLE_FEATURES
+                let feats: Vec<String> = DEFAULT_FEATURES
                     .iter()
                     .map(|&s| s.to_string())
                     .collect();
@@ -359,7 +359,7 @@ pub async fn my_chat_member_handler(
         let _: () = conn
             .hset(&chat_key, field::NAME, update.chat.title().unwrap())
             .expect("Failed to set up chat key");
-        // initialize default features for the chat
+        // initialize all features as enabled by default for the chat
         for feat in DEFAULT_FEATURES {
             let field = format!("feat:{}", feat);
             let _ : redis::RedisResult<()> = conn.hset_nx(&chat_key, field, "1");
@@ -393,10 +393,10 @@ pub async fn my_chat_member_handler(
 }
 
 pub async fn run_dispatcher(bot: Bot) {
-    // Ensure all available features exist in the global enabled set
+    // Ensure all default features exist in the global enabled set
     if let Ok(client) = redis::Client::open("redis://127.0.0.1/") {
         if let Ok(mut conn) = client.get_connection() {
-            for feat in ALL_AVAILABLE_FEATURES {
+            for feat in DEFAULT_FEATURES {
                 let _ : redis::RedisResult<()> = conn.sadd(ENABLED_FEATURES_KEY, *feat);
             }
         }

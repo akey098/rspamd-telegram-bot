@@ -112,16 +112,8 @@ pub mod symbol {
 }
 
 /// Features that are enabled for every chat by default.
+/// This now includes all available features to provide comprehensive spam protection by default.
 pub const DEFAULT_FEATURES: &[&str] = &[
-    "flood",
-    "repeat",
-    "whitelist",
-    "blacklist",
-];
-
-/// All available features that can be enabled/disabled by admins.
-/// This includes all features from the Lua modules.
-pub const ALL_AVAILABLE_FEATURES: &[&str] = &[
     // Core features (from core.lua)
     "flood",
     "repeat", 
@@ -151,6 +143,8 @@ pub const ALL_AVAILABLE_FEATURES: &[&str] = &[
     "shortener",
     "gibberish",
 ];
+
+
 
 /// Redis key storing the global set of features enabled by default.
 pub const ENABLED_FEATURES_KEY: &str = "tg:enabled_features";
