@@ -23,7 +23,7 @@ local settings = {
     ban = 20,
     user_prefix = 'tg:users:',
     chat_prefix = 'tg:chats:',
-    exp_flood = '60',
+    exp_flood = '30',
     exp_ban = '3600',
     banned_q = 3,
     
@@ -183,6 +183,168 @@ local function tg_caps_cb(task)
     end
 end
 
+-- TG_SUSPICIOUS: Detect suspicious activity
+local function tg_suspicious_cb(task)
+    local user_id, chat_id = get_user_chat_ids(task)
+    if user_id == "" then return end
+    
+    local user_key = settings.user_prefix .. user_id
+    
+    local function spam_cb(err, data)
+        if err then 
+            rspamd_logger.errx(task, 'spam_cb error: %1', err)
+            return 
+        end
+        
+        local total = safe_num(data)
+        if total > settings.suspicious then
+            local chat_key = settings.chat_prefix .. chat_id
+            lua_redis.redis_make_request(task,
+                redis_params,
+                chat_key,
+                true, -- is write
+                function() end,
+                'HINCRBY',
+                {chat_key, 'spam_count', '1'}
+            )
+            lua_redis.redis_make_request(task,
+                redis_params,
+                user_key,
+                true, -- is write
+                function() end,
+                'HINCRBY',
+                {user_key, 'rep', '1'}
+            )
+            task:insert_result('TG_SUSPICIOUS', 5.0)
+            rspamd_logger.infox(task, 'TG_SUSPICIOUS triggered for user %1, rep: %2', user_id, total)
+        end
+    end
+    
+    lua_redis.redis_make_request(task,
+        redis_params,
+        user_key,
+        false, -- is write
+        spam_cb,
+        'HGET',
+        {user_key, 'rep'}
+    )
+end
+
+-- TG_BAN: Temporary ban system
+local function tg_ban_cb(task)
+    local user_id, chat_id = get_user_chat_ids(task)
+    if user_id == "" then return end
+    
+    local user_key = settings.user_prefix .. user_id
+    
+    local function ban_cb(err, data)
+        if err then 
+            rspamd_logger.errx(task, 'ban_cb error: %1', err)
+            return 
+        end
+        
+        local total = safe_num(data)
+        if total > settings.ban then
+            local chat_key = settings.chat_prefix .. chat_id
+            lua_redis.redis_make_request(task,
+                redis_params,
+                chat_key,
+                true, -- is write
+                function() end,
+                'HINCRBY',
+                {chat_key, 'banned', '1'}
+            )
+            
+            local function banned_cb(_err, _data)
+                if _err or not _data then return end
+                lua_redis.redis_make_request(task,
+                    redis_params,
+                    user_key,
+                    true, -- is write
+                    function() end,
+                    'HEXPIRE',
+                    {user_key, settings.exp_ban, 'FIELDS', 1, 'banned'}
+                )
+            end
+            
+            lua_redis.redis_make_request(task,
+                redis_params,
+                user_key,
+                true, -- is write
+                banned_cb,
+                'HSET',
+                {user_key, 'banned', '1'}
+            )
+            lua_redis.redis_make_request(task,
+                redis_params,
+                user_key,
+                true, -- is write
+                function() end,
+                'HINCRBY',
+                {user_key, 'rep', '-5'}
+            )
+            lua_redis.redis_make_request(task,
+                redis_params,
+                user_key,
+                true, -- is write
+                function() end,
+                'HINCRBY',
+                {user_key, 'banned_q', '1'}
+            )
+            task:insert_result('TG_BAN', 10.0)
+            rspamd_logger.infox(task, 'TG_BAN triggered for user %1, rep: %2', user_id, total)
+        end
+    end
+    
+    lua_redis.redis_make_request(task,
+        redis_params,
+        user_key,
+        false, -- is write
+        ban_cb,
+        'HGET',
+        {user_key, 'rep'}
+    )
+end
+
+-- TG_PERM_BAN: Permanent ban system
+local function tg_perm_ban_cb(task)
+    local user_id, chat_id = get_user_chat_ids(task)
+    if user_id == "" then return end
+    
+    local user_key = settings.user_prefix .. user_id
+    
+    local function perm_ban_cb(err, data)
+        if err then 
+            rspamd_logger.errx(task, 'perm_ban_cb error: %1', err)
+            return 
+        end
+        
+        local banned_q = safe_num(data)
+        if banned_q > settings.banned_q then
+            local chat_key = settings.chat_prefix .. chat_id
+            lua_redis.redis_make_request(task,
+                redis_params,
+                chat_key,
+                true, -- is write
+                function() end,
+                'HINCRBY',
+                {chat_key, 'perm_banned', '1'}
+            )
+            task:insert_result('TG_PERM_BAN', 15.0)
+            rspamd_logger.infox(task, 'TG_PERM_BAN triggered for user %1, banned_q: %2', user_id, banned_q)
+        end
+    end
+    
+    lua_redis.redis_make_request(task,
+        redis_params,
+        user_key,
+        false, -- is write
+        perm_ban_cb,
+        'HGET',
+        {user_key, 'banned_q'}
+    )
+end
+
 -- Register symbols
 rspamd_config.TG_FLOOD = {
     callback = tg_flood_cb,
@@ -212,6 +374,27 @@ rspamd_config.TG_CAPS = {
     group = 'telegram_content'
 }
 
+rspamd_config.TG_SUSPICIOUS = {
+    callback = tg_suspicious_cb,
+    score = 5.0,
+    description = 'Suspicious activity',
+    group = 'telegram_core'
+}
+
+rspamd_config.TG_BAN = {
+    callback = tg_ban_cb,
+    score = 10.0,
+    description = 'Banned for some time',
+    group = 'telegram_core'
+}
+
+rspamd_config.TG_PERM_BAN = {
+    callback = tg_perm_ban_cb,
+    score = 15.0,
+    description = 'Permanently banned',
+    group = 'telegram_core'
+}
+
 -- TEST_RULE: Simple test rule to verify Lua loading
 rspamd_config.TEST_RULE = {
     callback = function(task)
@@ -224,4 +407,4 @@ rspamd_config.TEST_RULE = {
 }
 
 -- Log that symbols are registered
-rspamd_logger.infox(rspamd_config, 'Telegram symbols registered: TG_FLOOD, TG_LINK_SPAM, TG_MENTIONS, TG_CAPS, TEST_RULE') 
+rspamd_logger.infox(rspamd_config, 'Telegram symbols registered: TG_FLOOD, TG_LINK_SPAM, TG_MENTIONS, TG_CAPS, TG_SUSPICIOUS, TG_BAN, TG_PERM_BAN, TEST_RULE') 
