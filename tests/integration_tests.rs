@@ -16,7 +16,7 @@ use redis::Commands;
 use rspamd_telegram_bot::admin_handlers::{handle_admin_command, AdminCommand};
 use rspamd_telegram_bot::handlers::scan_msg;
 use rspamd_telegram_bot::config::{
-    field, key, suffix, symbol, DEFAULT_FEATURES, ENABLED_FEATURES_KEY,
+    field, key, suffix, symbol, ALL_AVAILABLE_FEATURES, ENABLED_FEATURES_KEY,
 };
 use serial_test::serial;
 use teloxide::types::{Chat, ChatId, ChatKind, ChatPrivate, MediaKind, MediaText, Message, MessageCommon, MessageId, MessageKind, User, UserId};
@@ -28,7 +28,7 @@ use warp::Filter;
 use serde_json::json;
 use regex::Regex;
 use bytes::Bytes;
-use std::io::Read;
+
 
 static MOCK_SERVER_INIT: Once = Once::new();
 static MOCK_SERVER_PORT: AtomicU16 = AtomicU16::new(0);
@@ -215,7 +215,7 @@ fn flush_redis() {
     let _: () = conn
         .flushdb()
         .expect("Failed to flush Redis");
-    for feat in DEFAULT_FEATURES {
+    for feat in ALL_AVAILABLE_FEATURES {
         let _: () = conn
             .sadd(ENABLED_FEATURES_KEY, *feat)
             .expect("Failed to seed default features");
