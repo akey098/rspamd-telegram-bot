@@ -183,6 +183,91 @@ local function tg_caps_cb(task)
     end
 end
 
+-- TG_REPEAT: Detect repeated messages
+local function tg_repeat_cb(task)
+    local user_id, chat_id = get_user_chat_ids(task)
+    if user_id == "" then return end
+    
+    rspamd_logger.infox(task, 'TG_REPEAT: Processing message for user %1', user_id)
+    
+    local user_key = settings.user_prefix .. user_id
+    local msg = get_message_text(task)
+    
+    local function last_msg_cb(err, data)
+        if err then 
+            rspamd_logger.errx(task, 'last_msg_cb error: %1', err)
+            return 
+        end
+        
+        local function get_count_cb(_err, _data)
+            if _err then return end
+            local count = safe_num(_data)
+            rspamd_logger.infox(task, 'TG_REPEAT: Current count for user %1 is %2', user_id, count)
+            if count > settings.repeated then
+                local chat_key = settings.chat_prefix .. chat_id
+                lua_redis.redis_make_request(task,
+                    redis_params,
+                    chat_key,
+                    true, -- is write
+                    function() end,
+                    'HINCRBY',
+                    {chat_key, 'spam_count', '1'}
+                )
+                lua_redis.redis_make_request(task,
+                    redis_params,
+                    user_key,
+                    true, -- is write
+                    function() end,
+                    'HINCRBY',
+                    {user_key, 'rep', '1'}
+                )
+                task:insert_result('TG_REPEAT', 2.0)
+                rspamd_logger.infox(task, 'TG_REPEAT triggered for user %1, count: %2', user_id, count)
+            end
+        end
+        
+        if safe_str(data) == msg then
+            rspamd_logger.infox(task, 'TG_REPEAT: Message matches previous for user %1', user_id)
+            lua_redis.redis_make_request(task,
+                redis_params,
+                user_key,
+                true, -- is write
+                get_count_cb,
+                'HINCRBY',
+                {user_key, 'eq_msg_count', 1}
+            )
+        else
+            rspamd_logger.infox(task, 'TG_REPEAT: Message is different for user %1', user_id)
+            lua_redis.redis_make_request(task,
+                redis_params,
+                user_key,
+                true, -- is write
+                function() end,
+                'HSET',
+                {user_key, 'eq_msg_count', 0}
+            )
+        end
+        
+        lua_redis.redis_make_request(task,
+            redis_params,
+            user_key,
+            true, -- is write
+            function() end,
+            'HSET',
+            {user_key, 'last_msg', msg}
+        )
+    end
+    
+    lua_redis.redis_make_request(task,
+        redis_params,
+        user_key,
+        false, -- is write
+        last_msg_cb,
+        'HGET',
+        {user_key, 'last_msg'}
+    )
+end
+
 -- TG_SUSPICIOUS: Detect suspicious activity
 local function tg_suspicious_cb(task)
     local user_id, chat_id = get_user_chat_ids(task)
@@ -353,6 +438,13 @@ rspamd_config.TG_FLOOD = {
     group = 'telegram_core'
 }
 
+rspamd_config.TG_REPEAT = {
+    callback = tg_repeat_cb,
+    score = 2.0,
+    description = 'User has sent a lot of equal messages',
+    group = 'telegram_core'
+}
+
 rspamd_config.TG_LINK_SPAM = {
     callback = tg_link_spam_cb,
     score = 2.5,
@@ -407,4 +499,4 @@ rspamd_config.TEST_RULE = {
 }
 
 -- Log that symbols are registered
-rspamd_logger.infox(rspamd_config, 'Telegram symbols registered: TG_FLOOD, TG_LINK_SPAM, TG_MENTIONS, TG_CAPS, TG_SUSPICIOUS, TG_BAN, TG_PERM_BAN, TEST_RULE') 
+rspamd_logger.infox(rspamd_config, 'Telegram symbols registered: TG_FLOOD, TG_REPEAT, TG_LINK_SPAM, TG_MENTIONS, TG_CAPS, TG_SUSPICIOUS, TG_BAN, TG_PERM_BAN, TEST_RULE') 

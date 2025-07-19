@@ -45,14 +45,21 @@ async fn do_periodic() -> Result<(), Box<dyn Error + Send + Sync>> {
         .expect("Failed to get users keys");
 
     for key in keys {
-        let rep: i64 = redis_conn
+        let rep: Option<i64> = redis_conn
             .hget(key.clone(), field::REP)
             .expect("Failed to get user's reputation");
 
-        if rep > 0 {
+        if let Some(rep_value) = rep {
+            if rep_value > 0 {
+                let _: () = redis_conn
+                    .hincr(key.clone(), field::REP, -1)
+                    .expect("Failed to decrease user's reputation");
+            }
+        } else {
+            // User doesn't have a reputation field yet, initialize it to 0
             let _: () = redis_conn
-                .hincr(key.clone(), field::REP, -1)
-                .expect("Failed to decrease user's reputation");
+                .hset(key.clone(), field::REP, 0)
+                .expect("Failed to initialize user's reputation");
         }
     }
 
