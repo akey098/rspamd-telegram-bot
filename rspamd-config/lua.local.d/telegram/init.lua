@@ -1,5 +1,5 @@
 --[[
-  Telegram Bot Rspamd Rules - Modular Structure
+  Telegram Bot Rspamd Rules - Modular Structure - DISABLED
   
   This module loads all telegram-related rules in a modular fashion.
   Each submodule handles a specific functional area:
@@ -9,8 +9,13 @@
   - timing.lua: Timing-based heuristics (join timing, silence)
   - lists.lua: Whitelist/blacklist functionality
   - heuristics.lua: Advanced spam detection patterns
+  
+  DISABLED: This modular system has been disabled in favor of telegram_simple.lua
+  to prevent duplicate symbol registration.
 ]]
 
+-- DISABLED: All modular loading commented out to prevent conflicts
+--[[
 -- Shared settings across all modules
 local settings = {
     -- Core settings
@@ -62,4 +67,5 @@ local M = {}
 -- Shared Redis utilities
 M.redis_utils = require "telegram.utils"
 
-return M 
+return M
+]]-- 

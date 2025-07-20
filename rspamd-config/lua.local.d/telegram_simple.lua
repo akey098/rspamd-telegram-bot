@@ -430,6 +430,140 @@ local function tg_perm_ban_cb(task)
     )
 end
 
+-- WHITELIST_USER: Check if user is whitelisted
+local function whitelist_user_cb(task)
+    local user_id, chat_id = get_user_chat_ids(task)
+    if user_id == "" then return end
+    
+    local user_key = settings.user_prefix .. user_id
+    
+    local function whitelist_cb(err, data)
+        if err then
+            rspamd_logger.errx(task, 'whitelist_cb error: %1', err)
+            return
+        end
+        if data then
+            task:insert_result('WHITELIST_USER', 1.0)
+            rspamd_logger.infox(task, 'WHITELIST_USER triggered for user %1', user_id)
+        end
+    end
+    
+    lua_redis.redis_make_request(task,
+        redis_params,
+        'tg:whitelist:users',
+        false, -- is write
+        whitelist_cb,
+        'SISMEMBER',
+        {'tg:whitelist:users', user_key}
+    )
+end
+
+-- BLACKLIST_USER: Check if user is blacklisted
+local function blacklist_user_cb(task)
+    local user_id, chat_id = get_user_chat_ids(task)
+    if user_id == "" then return end
+    
+    local user_key = settings.user_prefix .. user_id
+    
+    local function blacklist_cb(err, data)
+        if err then
+            rspamd_logger.errx(task, 'blacklist_cb error: %1', err)
+            return
+        end
+        if data then
+            task:insert_result('BLACKLIST_USER', 1.0)
+            rspamd_logger.infox(task, 'BLACKLIST_USER triggered for user %1', user_id)
+        end
+    end
+    
+    lua_redis.redis_make_request(task,
+        redis_params,
+        'tg:blacklist:users',
+        false, -- is write
+        blacklist_cb,
+        'SISMEMBER',
+        {'tg:blacklist:users', user_key}
+    )
+end
+
+-- WHITELIST_WORD: Check for whitelisted words
+local function whitelist_word_cb(task)
+    local user_id, chat_id = get_user_chat_ids(task)
+    if user_id == "" then return end
+    
+    local msg = get_message_text(task)
+    local words = {}
+    for word in msg:gmatch("%w+") do
+        words[#words + 1] = word
+    end
+    
+    local count = 0
+    local function if_member_cb(err, data)
+        if err then
+            rspamd_logger.errx(task, 'whitelist_word_cb error: %1', err)
+            return
+        end
+        if data then
+            count = count + 1
+        end
+    end
+    
+    for _, word in ipairs(words) do
+        lua_redis.redis_make_request(task,
+            redis_params,
+            'tg:whitelist:words',
+            false, -- is write
+            if_member_cb,
+            'SISMEMBER',
+            {'tg:whitelist:words', word}
+        )
+    end
+    
+    if count > 0 then
+        task:insert_result('WHITELIST_WORD', count)
+        rspamd_logger.infox(task, 'WHITELIST_WORD triggered for user %1, count: %2', user_id, count)
+    end
+end
+
+-- BLACKLIST_WORD: Check for blacklisted words
+local function blacklist_word_cb(task)
+    local user_id, chat_id = get_user_chat_ids(task)
+    if user_id == "" then return end
+    
+    local msg = get_message_text(task)
+    local words = {}
+    for word in msg:gmatch("%w+") do
+        words[#words + 1] = word
+    end
+    
+    local count = 0
+    local function if_member_cb(err, data)
+        if err then
+            rspamd_logger.errx(task, 'blacklist_word_cb error: %1', err)
+            return
+        end
+        if data then
+            count = count + 1
+        end
+    end
+    
+    for _, word in ipairs(words) do
+        lua_redis.redis_make_request(task,
+            redis_params,
+            'tg:blacklist:words',
+            false, -- is write
+            if_member_cb,
+            'SISMEMBER',
+            {'tg:blacklist:words', word}
+        )
+    end
+    
+    if count > 0 then
+        task:insert_result('BLACKLIST_WORD', count)
+        rspamd_logger.infox(task, 'BLACKLIST_WORD triggered for user %1, count: %2', user_id, count)
+    end
+end
+
 -- Register symbols
 rspamd_config.TG_FLOOD = {
     callback = tg_flood_cb,
@@ -487,6 +621,31 @@ rspamd_config.TG_PERM_BAN = {
     group = 'telegram_core'
 }
 
+-- Register whitelist/blacklist symbols
+rspamd_config.WHITELIST_USER = {
+    callback = whitelist_user_cb,
+    description = 'User is in whitelist',
+    group = 'telegram_lists'
+}
+
+rspamd_config.BLACKLIST_USER = {
+    callback = blacklist_user_cb,
+    description = 'User is in blacklist',
+    group = 'telegram_lists'
+}
+
+rspamd_config.WHITELIST_WORD = {
+    callback = whitelist_word_cb,
+    description = 'Word is in whitelist',
+    group = 'telegram_lists'
+}
+
+rspamd_config.BLACKLIST_WORD = {
+    callback = blacklist_word_cb,
+    description = 'Word is in blacklist',
+    group = 'telegram_lists'
+}
+
 -- TEST_RULE: Simple test rule to verify Lua loading
 rspamd_config.TEST_RULE = {
     callback = function(task)
@@ -499,4 +658,4 @@ rspamd_config.TEST_RULE = {
 }
 
 -- Log that symbols are registered
-rspamd_logger.infox(rspamd_config, 'Telegram symbols registered: TG_FLOOD, TG_REPEAT, TG_LINK_SPAM, TG_MENTIONS, TG_CAPS, TG_SUSPICIOUS, TG_BAN, TG_PERM_BAN, TEST_RULE') 
+rspamd_logger.infox(rspamd_config, 'Telegram symbols registered: TG_FLOOD, TG_REPEAT, TG_LINK_SPAM, TG_MENTIONS, TG_CAPS, TG_SUSPICIOUS, TG_BAN, TG_PERM_BAN, WHITELIST_USER, BLACKLIST_USER, WHITELIST_WORD, BLACKLIST_WORD, TEST_RULE') 
