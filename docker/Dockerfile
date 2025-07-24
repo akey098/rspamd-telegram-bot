@@ -9,25 +9,26 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /usr/src/app
+
+# Copy dependency files first for better caching
 COPY Cargo.toml Cargo.lock ./
 
-# Cache dependencies
+# Cache dependencies by building with dummy source
 RUN mkdir src && \
     echo 'fn main() { println!("dummy"); }' > src/main.rs && \
     echo '' > src/lib.rs && \
     cargo build --release && \
     rm -rf src
 
-# Copy all sources and rebuild the actual bot
+# Copy all sources
 COPY src/ ./src/
 COPY rspamd-config/ ./rspamd-config/
-COPY docker/entrypoint.sh /entrypoint.sh
-# Force rebuild by ensuring Cargo files are fresh
-COPY Cargo.toml Cargo.lock ./
-# Force rebuild by adding a timestamp
-RUN echo "Building real bot at $(date)" && cargo build --release
-RUN ls -l /usr/src/app/target/release/
-RUN apt-get update && apt-get install -y --no-install-recommends file && file /usr/src/app/target/release/rspamd-telegram-bot
+
+# Clean and rebuild with the actual source - this ensures we get the real binary
+RUN cargo clean && cargo build --release
+
+# Verify the binary was built correctly
+RUN ls -la target/release/ && file target/release/rspamd-telegram-bot
 
 # ┌─────────────────────────────────────────────────────┐
 # │ Stage 2: Runtime with Debian + Rspamd + Redis      │
