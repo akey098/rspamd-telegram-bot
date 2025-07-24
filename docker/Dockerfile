@@ -63,7 +63,10 @@ COPY --from=builder /usr/src/app/target/release/rspamd-telegram-bot /usr/local/b
 COPY docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-EXPOSE 11333 6379
+EXPOSE 11333 6379 10000
+
+# Render sets PORT environment variable for web services
+ENV PORT=10000
 
 ENTRYPOINT ["sh","-c", "\
     echo \"Cleaning ports…\"; \
