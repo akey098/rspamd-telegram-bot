@@ -646,16 +646,5 @@ rspamd_config.BLACKLIST_WORD = {
     group = 'telegram_lists'
 }
 
--- TEST_RULE: Simple test rule to verify Lua loading
-rspamd_config.TEST_RULE = {
-    callback = function(task)
-        rspamd_logger.infox(task, 'TEST_RULE: This is a test rule - Lua modules are loaded!')
-        task:insert_result('TEST_RULE', 1.0)
-    end,
-    score = 1.0,
-    description = 'Test rule to verify Lua loading',
-    group = 'telegram_content'
-}
-
 -- Log that symbols are registered
-rspamd_logger.infox(rspamd_config, 'Telegram symbols registered: TG_FLOOD, TG_REPEAT, TG_LINK_SPAM, TG_MENTIONS, TG_CAPS, TG_SUSPICIOUS, TG_BAN, TG_PERM_BAN, WHITELIST_USER, BLACKLIST_USER, WHITELIST_WORD, BLACKLIST_WORD, TEST_RULE') 
+rspamd_logger.infox(rspamd_config, 'Telegram symbols registered: TG_FLOOD, TG_REPEAT, TG_LINK_SPAM, TG_MENTIONS, TG_CAPS, TG_SUSPICIOUS, TG_BAN, TG_PERM_BAN, WHITELIST_USER, BLACKLIST_USER, WHITELIST_WORD, BLACKLIST_WORD') 
