@@ -564,6 +564,70 @@ local function blacklist_word_cb(task)
     end
 end
 
+-- TG_EMOJI_SPAM: Detect excessive emoji usage
+local function tg_emoji_spam_cb(task)
+    local text = get_message_text(task)
+    local count = 0
+    
+    -- Count emoji characters using Unicode ranges
+    -- This covers most common emoji ranges
+    for _ in text:gmatch('[\240-\244][\128-\191][\128-\191][\128-\191]') do
+        count = count + 1
+        if count > settings.emoji_limit then
+            task:insert_result('TG_EMOJI_SPAM', 2.5)
+            rspamd_logger.infox(task, 'TG_EMOJI_SPAM triggered, emoji count: %1', count)
+            break
+        end
+    end
+end
+
+-- TG_INVITE_LINK: Detect Telegram invite links
+local function tg_invite_link_cb(task)
+    local text = get_message_text(task):lower()
+    
+    for _, pattern in ipairs(settings.invite_link_patterns) do
+        if text:find(pattern, 1, true) then
+            task:insert_result('TG_INVITE_LINK', 4.0)
+            rspamd_logger.infox(task, 'TG_INVITE_LINK triggered, pattern: %1', pattern)
+            break
+        end
+    end
+end
+
+-- TG_PHONE_SPAM: Detect phone number patterns (promo spam)
+local function tg_phone_spam_cb(task)
+    local text = get_message_text(task)
+    
+    if text:match(settings.phone_regex) then
+        task:insert_result('TG_PHONE_SPAM', 3.0)
+        rspamd_logger.infox(task, 'TG_PHONE_SPAM triggered')
+    end
+end
+
+-- TG_SHORTENER: Detect URL shortener links
+local function tg_shortener_cb(task)
+    local text = get_message_text(task):lower()
+    
+    for _, shortener in ipairs(settings.shorteners) do
+        if text:find(shortener) then
+            task:insert_result('TG_SHORTENER', 2.0)
+            rspamd_logger.infox(task, 'TG_SHORTENER triggered, shortener: %1', shortener)
+            break
+        end
+    end
+end
+
+-- TG_GIBBERISH: Detect long sequences of random consonants
+local function tg_gibberish_cb(task)
+    local text = get_message_text(task)
+    
+    -- Pattern for 5+ consecutive consonants (indicating gibberish)
+    if text:match('[bcdfghjklmnpqrstvwxzBCDFGHJKLMNPQRSTVWXZ][bcdfghjklmnpqrstvwxzBCDFGHJKLMNPQRSTVWXZ][bcdfghjklmnpqrstvwxzBCDFGHJKLMNPQRSTVWXZ][bcdfghjklmnpqrstvwxzBCDFGHJKLMNPQRSTVWXZ][bcdfghjklmnpqrstvwxzBCDFGHJKLMNPQRSTVWXZ]') then
+        task:insert_result('TG_GIBBERISH', 2.0)
+        rspamd_logger.infox(task, 'TG_GIBBERISH triggered')
+    end
+end
+
 -- Register symbols
 rspamd_config.TG_FLOOD = {
     callback = tg_flood_cb,
@@ -646,5 +710,41 @@ rspamd_config.BLACKLIST_WORD = {
     group = 'telegram_lists'
 }
 
+-- Register advanced detection symbols
+rspamd_config.TG_EMOJI_SPAM = {
+    callback = tg_emoji_spam_cb,
+    score = 2.5,
+    description = 'Excessive emoji usage',
+    group = 'telegram_content'
+}
+
+rspamd_config.TG_INVITE_LINK = {
+    callback = tg_invite_link_cb,
+    score = 4.0,
+    description = 'Telegram invite link detected',
+    group = 'telegram_heuristics'
+}
+
+rspamd_config.TG_PHONE_SPAM = {
+    callback = tg_phone_spam_cb,
+    score = 3.0,
+    description = 'Contains phone number spam',
+    group = 'telegram_heuristics'
+}
+
+rspamd_config.TG_SHORTENER = {
+    callback = tg_shortener_cb,
+    score = 2.0,
+    description = 'Contains URL shortener link',
+    group = 'telegram_heuristics'
+}
+
+rspamd_config.TG_GIBBERISH = {
+    callback = tg_gibberish_cb,
+    score = 2.0,
+    description = 'Gibberish consonant sequences',
+    group = 'telegram_heuristics'
+}
+
 -- Log that symbols are registered
-rspamd_logger.infox(rspamd_config, 'Telegram symbols registered: TG_FLOOD, TG_REPEAT, TG_LINK_SPAM, TG_MENTIONS, TG_CAPS, TG_SUSPICIOUS, TG_BAN, TG_PERM_BAN, WHITELIST_USER, BLACKLIST_USER, WHITELIST_WORD, BLACKLIST_WORD') 
+rspamd_logger.infox(rspamd_config, 'Telegram symbols registered: TG_FLOOD, TG_REPEAT, TG_LINK_SPAM, TG_MENTIONS, TG_CAPS, TG_SUSPICIOUS, TG_BAN, TG_PERM_BAN, TG_EMOJI_SPAM, TG_INVITE_LINK, TG_PHONE_SPAM, TG_SHORTENER, TG_GIBBERISH, WHITELIST_USER, BLACKLIST_USER, WHITELIST_WORD, BLACKLIST_WORD') 

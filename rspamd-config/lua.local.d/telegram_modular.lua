@@ -7,4 +7,4 @@
 ]]
 
 -- Load the simple telegram rules
-dofile("/etc/rspamd/lua.local.d/telegram_simple.lua") 
+dofile(rspamd_paths["CONFDIR"] .. "/lua.local.d/telegram_simple.lua") 
