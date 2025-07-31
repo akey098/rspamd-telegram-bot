@@ -47,11 +47,19 @@ RUN apt-get update && \
 
 # Copy all Lua files and settings.conf
 COPY rspamd-config/lua.local.d /etc/rspamd/lua.local.d/
-RUN mkdir -p /etc/rspamd/lua && \
-    cp -R /etc/rspamd/lua.local.d/telegram /etc/rspamd/lua/ && \
+# Remove modular files to prevent duplicate symbol registrations
+RUN rm -rf /etc/rspamd/lua.local.d/telegram/ && \
     rm -f /etc/rspamd/lua.local.d/telegram.lua /etc/rspamd/lua.local.d/whiteblacklist.lua
 
 COPY rspamd-config/modules.local.d /etc/rspamd/modules.local.d/
+
+# Copy local.d directory which contains custom actions and other local configurations
+COPY rspamd-config/local.d /etc/rspamd/local.d/
+
+# Copy scores.d directory which contains custom scoring rules
+COPY rspamd-config/scores.d /etc/rspamd/scores.d/
+
+
 
 # Verify Rspamd configuration at build time
 RUN rspamadm configtest

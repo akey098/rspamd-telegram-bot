@@ -42,19 +42,27 @@ pub async fn handle_message(
     }
 
     // -------------------------------------------------------------
-    // Rspamd **custom actions** integration
-    // We now rely on the `action` field returned by Rspamd instead of
-    // manually comparing scores or looking for specific symbols.
-    // The expected custom actions should be defined in `local.d/actions.conf`,
-    // e.g.:
-    //   actions {
-    //     tg_warn      = { score = 5.0;  }
-    //     tg_delete    = { score = 10.0; }
-    //     tg_ban       = { score = 12.0; }
-    //     tg_perm_ban  = { score = 15.0; }
-    //   }
+    // Rspamd actions integration
+    // We map standard Rspamd actions to Telegram bot actions:
+    // - add_header (score 5.0) -> tg_warn
+    // - greylist (score 10.0) -> tg_delete  
+    // - reject (score 15.0) -> tg_ban
+    // - reject (score 20.0) -> tg_perm_ban
     // -------------------------------------------------------------
-    match scan_result.action.as_str() {
+    let action = match scan_result.action.as_str() {
+        "add_header" => "tg_warn",
+        "greylist" => "tg_delete",
+        "reject" => {
+            if scan_result.score >= 20.0 {
+                "tg_perm_ban"
+            } else {
+                "tg_ban"
+            }
+        },
+        _ => "none"
+    };
+    
+    match action {
         // Permanently ban the user and remove the message
         "tg_perm_ban" => {
             let _ = bot.delete_message(chat_id, message.id).await;

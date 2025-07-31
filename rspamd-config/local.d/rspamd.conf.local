@@ -4,8 +4,5 @@
 # Override the main Lua configuration to load our modules
 lua = "/etc/rspamd/lua.local.d/telegram_modular.lua";
 
-# Include custom actions for Telegram bot
-.include "$LOCAL_CONFDIR/actions.conf"
-
 # Also load the main rules
 .include "$CONFDIR/rules/rspamd.lua" 

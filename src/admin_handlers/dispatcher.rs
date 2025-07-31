@@ -304,7 +304,7 @@ pub async fn chat_member_handler(
                 if !update.new_chat_member.user.is_bot {
                     let _: () = conn
                         .sadd(admin_key.clone(), chat_id.0)
-                        .expect("Failed to add chat to bot_chats");
+                        .expect("Failed to add chat to admin's bot_chats");
                 }
             }
             let _: () = conn.hset(key.clone(), field::REP, 0)
