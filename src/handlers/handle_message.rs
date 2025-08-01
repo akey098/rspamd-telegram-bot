@@ -42,41 +42,19 @@ pub async fn handle_message(
     }
 
     // -------------------------------------------------------------
-    // Rspamd actions integration
-    // We map standard Rspamd actions to Telegram bot actions:
+    // Map Rspamd actions to Telegram bot actions:
     // - add_header (score 5.0) -> tg_warn
-    // - greylist (score 10.0) -> tg_delete  
-    // - reject (score 15.0) -> tg_ban
-    // - reject (score 20.0) -> tg_perm_ban
+    // - greylist (score 10.0) -> tg_delete
+    // - reject (score 15.0) -> tg_ban (temporary ban, permanent after 3rd)
     // -------------------------------------------------------------
     let action = match scan_result.action.as_str() {
         "add_header" => "tg_warn",
         "greylist" => "tg_delete",
-        "reject" => {
-            if scan_result.score >= 20.0 {
-                "tg_perm_ban"
-            } else {
-                "tg_ban"
-            }
-        },
+        "reject" => "tg_ban",  // Always start with temporary ban
         _ => "none"
     };
     
     match action {
-        // Permanently ban the user and remove the message
-        "tg_perm_ban" => {
-            let _ = bot.delete_message(chat_id, message.id).await;
-            let _ = bot.ban_chat_member(chat_id, user_id).await;
-            println!("User {} in chat {} permanently banned", user_id, chat_id);
-
-            let notify_text = format!("Banned user {} in chat {} for spam", user_id, chat_id);
-            if admin_chat_exists {
-                bot.send_message(ChatId(admin_chat[0]), notify_text).await?;
-            } else {
-                bot.send_message(chat_id, notify_text).await?;
-            }
-        }
-
         // Temporarily mute the user (ban) and delete the offending message
         "tg_ban" => {
             let _ = bot.delete_message(chat_id, message.id).await;
@@ -92,6 +70,11 @@ pub async fn handle_message(
             let banned_q: i64 = redis_conn
                 .hget(&user_key, field::BANNED_Q)
                 .unwrap_or(0);
+            
+            // Increment ban counter
+            let _: () = redis_conn
+                .hincr(&user_key, field::BANNED_Q, 1)
+                .expect("Failed to increment ban counter");
             
             // If this is the 3rd ban, trigger permanent ban
             if banned_q >= 2 { // 0-indexed, so 2 means 3rd ban
@@ -124,6 +107,20 @@ pub async fn handle_message(
                 } else {
                     bot.send_message(chat_id, notify_text).await?;
                 }
+            }
+        }
+
+        // Permanently ban the user and remove the message (legacy - should not be used)
+        "tg_perm_ban" => {
+            let _ = bot.delete_message(chat_id, message.id).await;
+            let _ = bot.ban_chat_member(chat_id, user_id).await;
+            println!("User {} in chat {} permanently banned", user_id, chat_id);
+
+            let notify_text = format!("Banned user {} in chat {} for spam", user_id, chat_id);
+            if admin_chat_exists {
+                bot.send_message(ChatId(admin_chat[0]), notify_text).await?;
+            } else {
+                bot.send_message(chat_id, notify_text).await?;
             }
         }
 
