@@ -135,7 +135,7 @@ local function tg_link_spam_cb(task)
 
     local urls = task:get_urls() or {}
     if #urls >= settings.link_spam then
-        task:insert_result('TG_LINK_SPAM')
+        task:insert_result('TG_LINK_SPAM', 1.0)
         rspamd_logger.infox(task, 'TG_LINK_SPAM triggered, URLs: %1', #urls)
     end
 end
@@ -177,7 +177,7 @@ local function tg_caps_cb(task)
     rspamd_logger.infox(task, 'TG_CAPS: Letters: %1, Caps: %2, Ratio: %3', letters, caps, letters > 0 and (caps/letters) or 0)
     
     if letters > 0 and (caps / letters) >= settings.caps_ratio then
-        task:insert_result('TG_CAPS', 1.5)
+        task:insert_result('TG_CAPS', 1.0)
         rspamd_logger.infox(task, 'TG_CAPS triggered, caps ratio: %1', caps/letters)
     else
         rspamd_logger.infox(task, 'TG_CAPS: Not triggered, ratio %1 < threshold %2', caps/letters, settings.caps_ratio)
@@ -222,7 +222,7 @@ local function tg_repeat_cb(task)
                     'HINCRBY',
                     {user_key, 'rep', '1'}
                 )
-                task:insert_result('TG_REPEAT', 2.0)
+                task:insert_result('TG_REPEAT', 1.0)
                 rspamd_logger.infox(task, 'TG_REPEAT triggered for user %1, count: %2', user_id, count)
             end
         end
@@ -301,7 +301,7 @@ local function tg_suspicious_cb(task)
                 'HINCRBY',
                 {user_key, 'rep', '1'}
             )
-            task:insert_result('TG_SUSPICIOUS', 5.0)
+            task:insert_result('TG_SUSPICIOUS', 1.0)
             rspamd_logger.infox(task, 'TG_SUSPICIOUS triggered for user %1, rep: %2', user_id, total)
         end
     end
@@ -404,7 +404,7 @@ local function tg_ban_cb(task)
                     {user_key, 'ban_reduction_time', tostring(reduction_time)}
                 )
                 
-                task:insert_result('TG_BAN', 10.0)
+                task:insert_result('TG_BAN', 1.0)
                 rspamd_logger.infox(task, 'TG_BAN triggered for user %1, rep: %2, ban count: %3', user_id, total, banned_q + 1)
             end
             
@@ -453,7 +453,7 @@ local function tg_perm_ban_cb(task)
                 'HINCRBY',
                 {chat_key, 'perm_banned', '1'}
             )
-            task:insert_result('TG_PERM_BAN', 15.0)
+            task:insert_result('TG_PERM_BAN', 1.0)
             rspamd_logger.infox(task, 'TG_PERM_BAN triggered for user %1, banned_q: %2', user_id, banned_q)
         end
     end
@@ -612,7 +612,7 @@ local function tg_emoji_spam_cb(task)
     for _ in text:gmatch('[\240-\244][\128-\191][\128-\191][\128-\191]') do
         count = count + 1
         if count > settings.emoji_limit then
-            task:insert_result('TG_EMOJI_SPAM', 2.5)
+            task:insert_result('TG_EMOJI_SPAM', 1.0)
             rspamd_logger.infox(task, 'TG_EMOJI_SPAM triggered, emoji count: %1', count)
             break
         end
@@ -625,7 +625,7 @@ local function tg_invite_link_cb(task)
     
     for _, pattern in ipairs(settings.invite_link_patterns) do
         if text:find(pattern, 1, true) then
-            task:insert_result('TG_INVITE_LINK', 4.0)
+            task:insert_result('TG_INVITE_LINK', 1.0)
             rspamd_logger.infox(task, 'TG_INVITE_LINK triggered, pattern: %1', pattern)
             break
         end
@@ -637,7 +637,7 @@ local function tg_phone_spam_cb(task)
     local text = get_message_text(task)
     
     if text:match(settings.phone_regex) then
-        task:insert_result('TG_PHONE_SPAM', 3.0)
+        task:insert_result('TG_PHONE_SPAM', 1.0)
         rspamd_logger.infox(task, 'TG_PHONE_SPAM triggered')
     end
 end
@@ -648,7 +648,7 @@ local function tg_shortener_cb(task)
     
     for _, shortener in ipairs(settings.shorteners) do
         if text:find(shortener) then
-            task:insert_result('TG_SHORTENER', 2.0)
+            task:insert_result('TG_SHORTENER', 1.0)
             rspamd_logger.infox(task, 'TG_SHORTENER triggered, shortener: %1', shortener)
             break
         end
@@ -661,7 +661,7 @@ local function tg_gibberish_cb(task)
     
     -- Pattern for 5+ consecutive consonants (indicating gibberish)
     if text:match('[bcdfghjklmnpqrstvwxzBCDFGHJKLMNPQRSTVWXZ][bcdfghjklmnpqrstvwxzBCDFGHJKLMNPQRSTVWXZ][bcdfghjklmnpqrstvwxzBCDFGHJKLMNPQRSTVWXZ][bcdfghjklmnpqrstvwxzBCDFGHJKLMNPQRSTVWXZ][bcdfghjklmnpqrstvwxzBCDFGHJKLMNPQRSTVWXZ]') then
-        task:insert_result('TG_GIBBERISH')
+        task:insert_result('TG_GIBBERISH', 1.0)
         rspamd_logger.infox(task, 'TG_GIBBERISH triggered')
     end
 end
