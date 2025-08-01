@@ -6,6 +6,7 @@ use tokio::time;
 use rspamd_telegram_bot::config::{field, key};
 use rspamd_telegram_bot::admin_handlers;
 use rspamd_telegram_bot::ban_manager::BanManager;
+use rspamd_telegram_bot::migration;
 use std::env;
 
 #[tokio::main]
@@ -17,6 +18,13 @@ async fn main() {
     
     pretty_env_logger::init();
     log::info!("Starting the spam detection bot...");
+
+    // Run reputation data migration
+    if let Err(err) = migration::migrate_reputation_data().await {
+        log::error!("Migration failed: {:?}", err);
+    } else {
+        log::info!("Reputation migration completed successfully");
+    }
 
     let bot = Bot::from_env();
 

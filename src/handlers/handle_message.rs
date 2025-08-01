@@ -49,12 +49,15 @@ pub async fn handle_message(
     };
     
     // Check for reputation symbols and adjust score
-    let _has_user_reputation = scan_result.symbols.iter().any(|s| s.0 == symbol::USER_REPUTATION);
+    let has_user_reputation = scan_result.symbols.iter().any(|s| s.0 == symbol::USER_REPUTATION);
     let has_bad_reputation = scan_result.symbols.iter().any(|s| s.0 == symbol::USER_REPUTATION_BAD);
     let has_good_reputation = scan_result.symbols.iter().any(|s| s.0 == symbol::USER_REPUTATION_GOOD);
     
     // Adjust score based on reputation
     let mut adjusted_score = scan_result.score;
+    if has_user_reputation {
+        println!("User reputation symbol detected");
+    }
     if has_bad_reputation {
         adjusted_score += 5.0; // Add penalty for bad reputation
         println!("User has bad reputation, adjusting score by +5.0");
