@@ -12,6 +12,8 @@ pub async fn scan_msg(msg: Message, text: String) -> Result<RspamdScanReply, Rsp
     let date = Utc::now().to_rfc2822();
     let text = text;
     let ip = detect_local_ipv4().unwrap_or_else(|| "127.0.0.1/32".to_string());
+    
+    // Enhanced email format with reputation headers
     let email = format!(
         "Received: from {ip} ({ip}) by localhost.localdomain with HTTP; {date}\r\n\
         Date: {date}\r\n\
@@ -21,6 +23,7 @@ pub async fn scan_msg(msg: Message, text: String) -> Result<RspamdScanReply, Rsp
         Message-ID: <{user_id}.{chat_id}@example.com>\r\n\
         X-Telegram-User: {user_id}\r\n\
         X-Telegram-Chat: {chat_id}\r\n\
+        X-TG-User: {user_id}\r\n\
         MIME-Version: 1.0\r\n\
         Content-Type: text/plain; charset=UTF-8\r\n\
         Content-Transfer-Encoding: 8bit\r\n\
@@ -33,6 +36,7 @@ pub async fn scan_msg(msg: Message, text: String) -> Result<RspamdScanReply, Rsp
         chat_id = chat_id,
         text = text.replace("\n", "\r\n")
     );
+    
     let options = Config::builder()
         .base_url(std::env::var("RSPAMD_URL").unwrap_or_else(|_| "http://localhost:11333".to_string()))
         .build();

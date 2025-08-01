@@ -5,4 +5,7 @@
 lua = "/etc/rspamd/lua.local.d/telegram_modular.lua";
 
 # Also load the main rules
-.include "$CONFDIR/rules/rspamd.lua" 
+.include "$CONFDIR/rules/rspamd.lua"
+
+# Enable reputation plugin
+.include "$CONFDIR/local.d/reputation.conf" 

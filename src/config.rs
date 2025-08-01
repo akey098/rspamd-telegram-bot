@@ -109,6 +109,14 @@ pub mod symbol {
     pub const WHITELIST_WORD: &str = "WHITELIST_WORD";
     /// Symbol for blacklist of words
     pub const BLACKLIST_WORD: &str = "BLACKLIST_WORD";
+    
+    // Reputation-based symbols (from Rspamd reputation plugin)
+    /// Symbol for user reputation (from Rspamd reputation plugin)
+    pub const USER_REPUTATION: &str = "USER_REPUTATION";
+    /// Symbol for bad user reputation
+    pub const USER_REPUTATION_BAD: &str = "USER_REPUTATION_BAD";
+    /// Symbol for good user reputation
+    pub const USER_REPUTATION_GOOD: &str = "USER_REPUTATION_GOOD";
 }
 
 /// Features that are enabled for every chat by default.

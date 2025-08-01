@@ -1,4 +1,4 @@
-use crate::config::{field, key, BAN_COUNTER_REDUCTION_INTERVAL};
+use crate::config::{field, key, BAN_COUNTER_REDUCTION_INTERVAL, symbol};
 use crate::handlers::scan_msg;
 use chrono::{Duration, Utc};
 use redis::Commands;
@@ -47,6 +47,33 @@ pub async fn handle_message(
             return Ok(());
         }
     };
+    
+    // Check for reputation symbols and adjust score
+    let _has_user_reputation = scan_result.symbols.iter().any(|s| s.0 == symbol::USER_REPUTATION);
+    let has_bad_reputation = scan_result.symbols.iter().any(|s| s.0 == symbol::USER_REPUTATION_BAD);
+    let has_good_reputation = scan_result.symbols.iter().any(|s| s.0 == symbol::USER_REPUTATION_GOOD);
+    
+    // Adjust score based on reputation
+    let mut adjusted_score = scan_result.score;
+    if has_bad_reputation {
+        adjusted_score += 5.0; // Add penalty for bad reputation
+        println!("User has bad reputation, adjusting score by +5.0");
+    } else if has_good_reputation {
+        adjusted_score -= 1.0; // Reduce score for good reputation
+        println!("User has good reputation, adjusting score by -1.0");
+    }
+    
+    // Determine action based on adjusted score
+    let action = if adjusted_score >= 15.0 {
+        "tg_ban"
+    } else if adjusted_score >= 10.0 {
+        "tg_delete"
+    } else if adjusted_score >= 5.0 {
+        "tg_warn"
+    } else {
+        "none"
+    };
+    
     let redis_client =
         redis::Client::open("redis://127.0.0.1/").expect("Failed to connect to Redis");
     let mut redis_conn = redis_client
@@ -71,12 +98,6 @@ pub async fn handle_message(
     // - greylist (score 10.0) -> tg_delete
     // - reject (score 15.0) -> tg_ban (temporary ban, permanent after 3rd)
     // -------------------------------------------------------------
-    let action = match scan_result.action.as_str() {
-        "add_header" => "tg_warn",
-        "greylist" => "tg_delete",
-        "reject" => "tg_ban",  // Always start with temporary ban
-        _ => "none"
-    };
     
     match action {
         // Temporarily mute the user (ban) and delete the offending message
@@ -208,6 +229,9 @@ pub async fn handle_message(
     }
 
     println!("Your score is {} and the action is {}", scan_result.score, scan_result.action);
+    if adjusted_score != scan_result.score {
+        println!("Adjusted score after reputation: {} (original: {})", adjusted_score, scan_result.score);
+    }
     for symbol in scan_result.symbols {
         println!("{} {} {} ", symbol.0, symbol.1.score, symbol.1.metric_score);
     }
