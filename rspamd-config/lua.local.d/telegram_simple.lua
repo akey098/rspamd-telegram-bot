@@ -44,6 +44,11 @@ local settings = {
     phone_regex = '%+?%d[%d%-%s%(%)]%d%d%d%d',
     spam_chat_regex = 't.me/joinchat',
     shorteners = {'bit%.ly', 't%.co', 'goo%.gl', 'tinyurl%.com', 'is%.gd', 'ow%.ly'},
+    
+    -- Reputation settings
+    reputation_key_prefix = 'tg:reputation:user:',
+    reputation_bad_threshold = 10,
+    reputation_good_threshold = -5,
 }
 
 -- Initialize Redis connection
@@ -70,6 +75,89 @@ end
 
 local function get_message_text(task)
     return safe_str(task:get_rawbody())
+end
+
+-- Reputation integration functions
+local function update_user_reputation(task, user_id, is_spam)
+    if user_id == "" then return end
+    
+    local reputation_key = settings.reputation_key_prefix .. user_id
+    local field = is_spam and 'bad' or 'good'
+    
+    rspamd_logger.infox(task, 'Updating reputation for user %1: %2 = %3', user_id, field, is_spam and 'spam' or 'good')
+    
+    lua_redis.redis_make_request(task,
+        redis_params,
+        reputation_key,
+        true, -- is write
+        function(err)
+            if err then
+                rspamd_logger.errx(task, 'Failed to update reputation for user %1: %2', user_id, err)
+            else
+                rspamd_logger.infox(task, 'Successfully updated reputation for user %1: %2', user_id, field)
+            end
+        end,
+        'HINCRBY',
+        {reputation_key, field, 1}
+    )
+    
+    -- Also set expiration for the reputation key (1 week)
+    lua_redis.redis_make_request(task,
+        redis_params,
+        reputation_key,
+        true, -- is write
+        function() end,
+        'EXPIRE',
+        {reputation_key, 604800} -- 7 days
+    )
+end
+
+-- Function to update good reputation for legitimate messages
+local function update_good_reputation(task, user_id)
+    if user_id == "" then return end
+    
+    -- Only update good reputation occasionally to avoid spam
+    -- Use a simple hash-based approach to update ~10% of the time
+    local hash = 0
+    for i = 1, #user_id do
+        hash = (hash * 31 + string.byte(user_id, i)) % 100
+    end
+    
+    if hash < 10 then -- 10% chance
+        update_user_reputation(task, user_id, false)
+        rspamd_logger.infox(task, 'Updated good reputation for user %1 (hash: %2)', user_id, hash)
+    end
+end
+
+local function get_user_reputation(task, user_id)
+    if user_id == "" then return 0 end
+    
+    local reputation_key = settings.reputation_key_prefix .. user_id
+    
+    local function reputation_cb(err, data)
+        if err then
+            rspamd_logger.errx(task, 'Failed to get reputation for user %1: %2', user_id, err)
+            return 0
+        end
+        
+        local bad_count = safe_num(data[1] or 0)
+        local good_count = safe_num(data[2] or 0)
+        local reputation = bad_count - good_count
+        
+        rspamd_logger.infox(task, 'User %1 reputation: bad=%2, good=%3, total=%4', user_id, bad_count, good_count, reputation)
+        return reputation
+    end
+    
+    lua_redis.redis_make_request(task,
+        redis_params,
+        reputation_key,
+        false, -- is write
+        reputation_cb,
+        'HMGET',
+        {reputation_key, 'bad', 'good'}
+    )
+    
+    return 0 -- Default return value
 end
 
 -- TG_FLOOD: Detect message flooding
@@ -113,6 +201,10 @@ local function tg_flood_cb(task)
                 'HINCRBY',
                 {user_key, 'rep', '1'}
             )
+            
+            -- Update reputation for spam detection
+            update_user_reputation(task, user_id, true)
+            
             task:insert_result('TG_FLOOD')
             rspamd_logger.infox(task, 'TG_FLOOD triggered for user %1, count: %2', user_id, count)
         end
@@ -130,11 +222,14 @@ end
 
 -- TG_LINK_SPAM: Detect excessive URLs
 local function tg_link_spam_cb(task)
-    local _, chat_id = get_user_chat_ids(task)
+    local user_id, chat_id = get_user_chat_ids(task)
     if chat_id == "" then return end
 
     local urls = task:get_urls() or {}
     if #urls >= settings.link_spam then
+        -- Update reputation for spam detection
+        update_user_reputation(task, user_id, true)
+        
         task:insert_result('TG_LINK_SPAM', 1.0)
         rspamd_logger.infox(task, 'TG_LINK_SPAM triggered, URLs: %1', #urls)
     end
@@ -142,6 +237,7 @@ end
 
 -- TG_MENTIONS: Detect excessive user mentions
 local function tg_mentions_cb(task)
+    local user_id = get_user_chat_ids(task)
     local text = get_message_text(task)
     
     local n = 0
@@ -150,6 +246,9 @@ local function tg_mentions_cb(task)
     end
     
     if n >= settings.mentions then
+        -- Update reputation for spam detection
+        update_user_reputation(task, user_id, true)
+        
         task:insert_result('TG_MENTIONS')
         rspamd_logger.infox(task, 'TG_MENTIONS triggered, mentions: %1', n)
     end
@@ -157,6 +256,7 @@ end
 
 -- TG_CAPS: Detect excessive capital letters
 local function tg_caps_cb(task)
+    local user_id = get_user_chat_ids(task)
     local text = get_message_text(task)
     
     rspamd_logger.infox(task, 'TG_CAPS: Processing message, length: %1', #text)
@@ -177,6 +277,9 @@ local function tg_caps_cb(task)
     rspamd_logger.infox(task, 'TG_CAPS: Letters: %1, Caps: %2, Ratio: %3', letters, caps, letters > 0 and (caps/letters) or 0)
     
     if letters > 0 and (caps / letters) >= settings.caps_ratio then
+        -- Update reputation for spam detection
+        update_user_reputation(task, user_id, true)
+        
         task:insert_result('TG_CAPS', 1.0)
         rspamd_logger.infox(task, 'TG_CAPS triggered, caps ratio: %1', caps/letters)
     else
@@ -222,6 +325,10 @@ local function tg_repeat_cb(task)
                     'HINCRBY',
                     {user_key, 'rep', '1'}
                 )
+                
+                -- Update reputation for spam detection
+                update_user_reputation(task, user_id, true)
+                
                 task:insert_result('TG_REPEAT', 1.0)
                 rspamd_logger.infox(task, 'TG_REPEAT triggered for user %1, count: %2', user_id, count)
             end
@@ -301,8 +408,12 @@ local function tg_suspicious_cb(task)
                 'HINCRBY',
                 {user_key, 'rep', '1'}
             )
+            
+            -- Update reputation for spam detection
+            update_user_reputation(task, user_id, true)
+            
             task:insert_result('TG_SUSPICIOUS', 1.0)
-            rspamd_logger.infox(task, 'TG_SUSPICIOUS triggered for user %1, rep: %2', user_id, total)
+            rspamd_logger.infox(task, 'TG_SUSPICIOUS triggered for user %1, total: %2', user_id, total)
         end
     end
     
@@ -312,7 +423,7 @@ local function tg_suspicious_cb(task)
         false, -- is write
         spam_cb,
         'HGET',
-        {user_key, 'rep'}
+        {user_key, 'spam_count'}
     )
 end
 
@@ -392,6 +503,9 @@ local function tg_ban_cb(task)
                     {user_key, 'rep', '-5'}
                 )
                 
+                -- Update reputation for ban
+                update_user_reputation(task, user_id, true)
+                
                 -- Set ban reduction time for automatic counter reduction
                 local current_time = os.time()
                 local reduction_time = current_time + settings.ban_reduction_interval
@@ -453,6 +567,10 @@ local function tg_perm_ban_cb(task)
                 'HINCRBY',
                 {chat_key, 'perm_banned', '1'}
             )
+            
+            -- Update reputation for permanent ban
+            update_user_reputation(task, user_id, true)
+            
             task:insert_result('TG_PERM_BAN', 1.0)
             rspamd_logger.infox(task, 'TG_PERM_BAN triggered for user %1, banned_q: %2', user_id, banned_q)
         end
@@ -604,6 +722,7 @@ end
 
 -- TG_EMOJI_SPAM: Detect excessive emoji usage
 local function tg_emoji_spam_cb(task)
+    local user_id = get_user_chat_ids(task)
     local text = get_message_text(task)
     local count = 0
     
@@ -612,6 +731,9 @@ local function tg_emoji_spam_cb(task)
     for _ in text:gmatch('[\240-\244][\128-\191][\128-\191][\128-\191]') do
         count = count + 1
         if count > settings.emoji_limit then
+            -- Update reputation for spam detection
+            update_user_reputation(task, user_id, true)
+            
             task:insert_result('TG_EMOJI_SPAM', 1.0)
             rspamd_logger.infox(task, 'TG_EMOJI_SPAM triggered, emoji count: %1', count)
             break
@@ -621,10 +743,14 @@ end
 
 -- TG_INVITE_LINK: Detect Telegram invite links
 local function tg_invite_link_cb(task)
+    local user_id = get_user_chat_ids(task)
     local text = get_message_text(task):lower()
     
     for _, pattern in ipairs(settings.invite_link_patterns) do
         if text:find(pattern, 1, true) then
+            -- Update reputation for spam detection
+            update_user_reputation(task, user_id, true)
+            
             task:insert_result('TG_INVITE_LINK', 1.0)
             rspamd_logger.infox(task, 'TG_INVITE_LINK triggered, pattern: %1', pattern)
             break
@@ -634,9 +760,13 @@ end
 
 -- TG_PHONE_SPAM: Detect phone number patterns (promo spam)
 local function tg_phone_spam_cb(task)
+    local user_id = get_user_chat_ids(task)
     local text = get_message_text(task)
     
     if text:match(settings.phone_regex) then
+        -- Update reputation for spam detection
+        update_user_reputation(task, user_id, true)
+        
         task:insert_result('TG_PHONE_SPAM', 1.0)
         rspamd_logger.infox(task, 'TG_PHONE_SPAM triggered')
     end
@@ -644,10 +774,14 @@ end
 
 -- TG_SHORTENER: Detect URL shortener links
 local function tg_shortener_cb(task)
+    local user_id = get_user_chat_ids(task)
     local text = get_message_text(task):lower()
     
     for _, shortener in ipairs(settings.shorteners) do
         if text:find(shortener) then
+            -- Update reputation for spam detection
+            update_user_reputation(task, user_id, true)
+            
             task:insert_result('TG_SHORTENER', 1.0)
             rspamd_logger.infox(task, 'TG_SHORTENER triggered, shortener: %1', shortener)
             break
@@ -657,13 +791,26 @@ end
 
 -- TG_GIBBERISH: Detect long sequences of random consonants
 local function tg_gibberish_cb(task)
+    local user_id = get_user_chat_ids(task)
     local text = get_message_text(task)
     
     -- Pattern for 5+ consecutive consonants (indicating gibberish)
     if text:match('[bcdfghjklmnpqrstvwxzBCDFGHJKLMNPQRSTVWXZ][bcdfghjklmnpqrstvwxzBCDFGHJKLMNPQRSTVWXZ][bcdfghjklmnpqrstvwxzBCDFGHJKLMNPQRSTVWXZ][bcdfghjklmnpqrstvwxzBCDFGHJKLMNPQRSTVWXZ][bcdfghjklmnpqrstvwxzBCDFGHJKLMNPQRSTVWXZ]') then
+        -- Update reputation for spam detection
+        update_user_reputation(task, user_id, true)
+        
         task:insert_result('TG_GIBBERISH', 1.0)
         rspamd_logger.infox(task, 'TG_GIBBERISH triggered')
     end
+end
+
+-- TG_GOOD_REPUTATION: Update good reputation for legitimate messages
+local function tg_good_reputation_cb(task)
+    local user_id = get_user_chat_ids(task)
+    if user_id == "" then return end
+    
+    -- Update good reputation occasionally
+    update_good_reputation(task, user_id)
 end
 
 -- Register symbols
@@ -784,5 +931,12 @@ rspamd_config.TG_GIBBERISH = {
     group = 'telegram_heuristics'
 }
 
+rspamd_config.TG_GOOD_REPUTATION = {
+    callback = tg_good_reputation_cb,
+    score = 0.0, -- No score impact, just updates reputation
+    description = 'Update good reputation for legitimate messages',
+    group = 'telegram_reputation'
+}
+
 -- Log that symbols are registered
-rspamd_logger.infox(rspamd_config, 'Telegram symbols registered: TG_FLOOD, TG_REPEAT, TG_LINK_SPAM, TG_MENTIONS, TG_CAPS, TG_SUSPICIOUS, TG_BAN, TG_PERM_BAN, TG_EMOJI_SPAM, TG_INVITE_LINK, TG_PHONE_SPAM, TG_SHORTENER, TG_GIBBERISH, WHITELIST_USER, BLACKLIST_USER, WHITELIST_WORD, BLACKLIST_WORD') 
+rspamd_logger.infox(rspamd_config, 'Telegram symbols registered: TG_FLOOD, TG_REPEAT, TG_LINK_SPAM, TG_MENTIONS, TG_CAPS, TG_SUSPICIOUS, TG_BAN, TG_PERM_BAN, TG_EMOJI_SPAM, TG_INVITE_LINK, TG_PHONE_SPAM, TG_SHORTENER, TG_GIBBERISH, TG_GOOD_REPUTATION, WHITELIST_USER, BLACKLIST_USER, WHITELIST_WORD, BLACKLIST_WORD') 
