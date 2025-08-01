@@ -4,7 +4,31 @@ use chrono::{Duration, Utc};
 use redis::Commands;
 use std::error::Error;
 use teloxide::prelude::*;
-use teloxide::types::ChatPermissions;
+use teloxide::types::{ChatPermissions, ChatMemberStatus};
+
+async fn check_bot_permissions(bot: &Bot, chat_id: ChatId) -> anyhow::Result<()> {
+    match bot.get_chat_member(chat_id, bot.get_me().await?.id).await {
+        Ok(member) => {
+            println!("Bot member status: {:?}", member.status());
+            match member.status() {
+                ChatMemberStatus::Administrator => {
+                    println!("Bot is admin - should have restrict permissions");
+                    Ok(())
+                },
+                ChatMemberStatus::Owner => {
+                    println!("Bot is owner - has all permissions");
+                    Ok(())
+                },
+                _ => {
+                    Err(anyhow::anyhow!("Bot is not admin in this chat"))
+                }
+            }
+        },
+        Err(e) => {
+            Err(anyhow::anyhow!("Failed to get bot member info: {}", e))
+        }
+    }
+}
 
 pub async fn handle_message(
     bot: Bot,
@@ -90,7 +114,21 @@ pub async fn handle_message(
             } else {
                 // Temporary ban - mute user for the configured duration
                 let mute_duration = 3600; // 1 hour default mute duration
-                let _ = mute_user_for(bot.clone(), chat_id, user_id, mute_duration).await;
+                println!("Attempting to mute user {} in chat {} for {} seconds", user_id, chat_id, mute_duration);
+                
+                // Check bot permissions first
+                match check_bot_permissions(&bot, chat_id).await {
+                    Ok(_) => println!("Bot has required permissions"),
+                    Err(e) => {
+                        eprintln!("Bot permission check failed: {}", e);
+                        // Continue anyway - the mute might still work
+                    }
+                }
+                
+                match mute_user_for(bot.clone(), chat_id, user_id, mute_duration).await {
+                    Ok(_) => println!("Successfully muted user {} in chat {}", user_id, chat_id),
+                    Err(e) => eprintln!("Failed to mute user {} in chat {}: {}", user_id, chat_id, e),
+                }
                 
                 // Set up automatic ban counter reduction
                 let reduction_time = Utc::now().timestamp() + BAN_COUNTER_REDUCTION_INTERVAL;
@@ -185,12 +223,21 @@ async fn mute_user_for(
     seconds: i64,
 ) -> anyhow::Result<()> {
     let until_ts = Utc::now() + Duration::seconds(seconds);
+    println!("Setting mute until: {}", until_ts);
 
     let perms = ChatPermissions::empty();
+    println!("Using empty permissions for mute");
 
-    bot.restrict_chat_member(chat_id, user_id, perms)
+    match bot.restrict_chat_member(chat_id, user_id, perms)
         .until_date(until_ts)
-        .await?;
-
-    Ok(())
+        .await {
+        Ok(_) => {
+            println!("Restrict chat member API call successful");
+            Ok(())
+        },
+        Err(e) => {
+            eprintln!("Restrict chat member API call failed: {}", e);
+            Err(anyhow::anyhow!("Failed to restrict chat member: {}", e))
+        }
+    }
 }
