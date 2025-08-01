@@ -661,7 +661,7 @@ local function tg_gibberish_cb(task)
     
     -- Pattern for 5+ consecutive consonants (indicating gibberish)
     if text:match('[bcdfghjklmnpqrstvwxzBCDFGHJKLMNPQRSTVWXZ][bcdfghjklmnpqrstvwxzBCDFGHJKLMNPQRSTVWXZ][bcdfghjklmnpqrstvwxzBCDFGHJKLMNPQRSTVWXZ][bcdfghjklmnpqrstvwxzBCDFGHJKLMNPQRSTVWXZ][bcdfghjklmnpqrstvwxzBCDFGHJKLMNPQRSTVWXZ]') then
-        task:insert_result('TG_GIBBERISH', 2.0)
+        task:insert_result('TG_GIBBERISH')
         rspamd_logger.infox(task, 'TG_GIBBERISH triggered')
     end
 end
