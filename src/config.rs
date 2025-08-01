@@ -148,3 +148,6 @@ pub const DEFAULT_FEATURES: &[&str] = &[
 
 /// Redis key storing the global set of features enabled by default.
 pub const ENABLED_FEATURES_KEY: &str = "tg:enabled_features";
+
+/// Ban counter reduction interval in seconds (48 hours)
+pub const BAN_COUNTER_REDUCTION_INTERVAL: i64 = 48 * 60 * 60; // 48 hours in seconds

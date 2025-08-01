@@ -5,6 +5,7 @@ use teloxide::prelude::*;
 use tokio::time;
 use rspamd_telegram_bot::config::{field, key};
 use rspamd_telegram_bot::admin_handlers;
+use rspamd_telegram_bot::ban_manager::BanManager;
 use std::env;
 
 #[tokio::main]
@@ -22,6 +23,17 @@ async fn main() {
     // Start health check server for Render (if PORT is set)
     if let Ok(port) = env::var("PORT") {
         tokio::spawn(start_health_server(port));
+    }
+
+    // Start ban manager for automatic ban counter reduction
+    if let Ok(ban_manager) = BanManager::new() {
+        tokio::spawn({
+            async move {
+                ban_manager.start_ban_counter_reduction().await;
+            }
+        });
+    } else {
+        eprintln!("Failed to initialize ban manager");
     }
 
     tokio::spawn({

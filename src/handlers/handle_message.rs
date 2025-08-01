@@ -1,4 +1,4 @@
-use crate::config::{field, key};
+use crate::config::{field, key, BAN_COUNTER_REDUCTION_INTERVAL};
 use crate::handlers::scan_msg;
 use chrono::{Duration, Utc};
 use redis::Commands;
@@ -85,19 +85,45 @@ pub async fn handle_message(
                 message.id, chat_id, user_id
             );
 
-            let ttl: i64 = redis_conn
-                .httl(key.clone(), field::BANNED)
-                .expect("Failed to check user's banned.");
-            let _ = mute_user_for(bot.clone(), chat_id, user_id, ttl).await;
-
-            let notify_text = format!(
-                "Deleted message {} from user {} in chat {}. Muted user for {} seconds",
-                message.id, user_id, chat_id, ttl
-            );
-            if admin_chat_exists {
-                bot.send_message(ChatId(admin_chat[0]), notify_text).await?;
+            // Get user key for Redis operations
+            let user_key = format!("{}{}", key::TG_USERS_PREFIX, user_id);
+            
+            // Check current ban count and handle ban logic
+            let banned_q: i64 = redis_conn
+                .hget(&user_key, field::BANNED_Q)
+                .unwrap_or(0);
+            
+            // If this is the 3rd ban, trigger permanent ban
+            if banned_q >= 2 { // 0-indexed, so 2 means 3rd ban
+                let _ = bot.ban_chat_member(chat_id, user_id).await;
+                println!("User {} in chat {} permanently banned (3rd ban)", user_id, chat_id);
+                
+                let notify_text = format!("Permanently banned user {} in chat {} for spam (3rd ban)", user_id, chat_id);
+                if admin_chat_exists {
+                    bot.send_message(ChatId(admin_chat[0]), notify_text).await?;
+                } else {
+                    bot.send_message(chat_id, notify_text).await?;
+                }
             } else {
-                bot.send_message(chat_id, notify_text).await?;
+                // Temporary ban - mute user for the configured duration
+                let mute_duration = 3600; // 1 hour default mute duration
+                let _ = mute_user_for(bot.clone(), chat_id, user_id, mute_duration).await;
+                
+                // Set up automatic ban counter reduction
+                let reduction_time = Utc::now().timestamp() + BAN_COUNTER_REDUCTION_INTERVAL;
+                let _: () = redis_conn
+                    .hset(&user_key, "ban_reduction_time", reduction_time.to_string())
+                    .expect("Failed to set ban reduction time");
+                
+                let notify_text = format!(
+                    "Deleted message {} from user {} in chat {}. Muted user for {} seconds. Ban count: {}/3",
+                    message.id, user_id, chat_id, mute_duration, banned_q + 1
+                );
+                if admin_chat_exists {
+                    bot.send_message(ChatId(admin_chat[0]), notify_text).await?;
+                } else {
+                    bot.send_message(chat_id, notify_text).await?;
+                }
             }
         }
 

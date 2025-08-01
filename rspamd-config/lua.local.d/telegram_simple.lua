@@ -26,6 +26,7 @@ local settings = {
     exp_flood = '30',
     exp_ban = '3600',
     banned_q = 3,
+    ban_reduction_interval = 172800, -- 48 hours in seconds
     
     -- Content thresholds
     link_spam = 3,
@@ -340,44 +341,81 @@ local function tg_ban_cb(task)
                 {chat_key, 'banned', '1'}
             )
             
-            local function banned_cb(_err, _data)
-                if _err or not _data then return end
+            -- Get current ban count
+            local function get_banned_q_cb(_err, _data)
+                if _err then
+                    rspamd_logger.errx(task, 'get_banned_q_cb error: %1', _err)
+                    return
+                end
+                
+                local banned_q = safe_num(_data)
+                
+                -- Increment ban counter
                 lua_redis.redis_make_request(task,
                     redis_params,
                     user_key,
                     true, -- is write
                     function() end,
-                    'HEXPIRE',
-                    {user_key, settings.exp_ban, 'FIELDS', 1, 'banned'}
+                    'HINCRBY',
+                    {user_key, 'banned_q', '1'}
                 )
+                
+                -- Set ban flag with expiration
+                local function banned_cb(__err, __data)
+                    if __err or not __data then return end
+                    lua_redis.redis_make_request(task,
+                        redis_params,
+                        user_key,
+                        true, -- is write
+                        function() end,
+                        'HEXPIRE',
+                        {user_key, settings.exp_ban, 'FIELDS', 1, 'banned'}
+                    )
+                end
+                
+                lua_redis.redis_make_request(task,
+                    redis_params,
+                    user_key,
+                    true, -- is write
+                    banned_cb,
+                    'HSET',
+                    {user_key, 'banned', '1'}
+                )
+                
+                -- Reduce reputation
+                lua_redis.redis_make_request(task,
+                    redis_params,
+                    user_key,
+                    true, -- is write
+                    function() end,
+                    'HINCRBY',
+                    {user_key, 'rep', '-5'}
+                )
+                
+                -- Set ban reduction time for automatic counter reduction
+                local current_time = os.time()
+                local reduction_time = current_time + settings.ban_reduction_interval
+                lua_redis.redis_make_request(task,
+                    redis_params,
+                    user_key,
+                    true, -- is write
+                    function() end,
+                    'HSET',
+                    {user_key, 'ban_reduction_time', tostring(reduction_time)}
+                )
+                
+                task:insert_result('TG_BAN', 10.0)
+                rspamd_logger.infox(task, 'TG_BAN triggered for user %1, rep: %2, ban count: %3', user_id, total, banned_q + 1)
             end
             
             lua_redis.redis_make_request(task,
                 redis_params,
                 user_key,
-                true, -- is write
-                banned_cb,
-                'HSET',
-                {user_key, 'banned', '1'}
+                false, -- is write
+                get_banned_q_cb,
+                'HGET',
+                {user_key, 'banned_q'}
             )
-            lua_redis.redis_make_request(task,
-                redis_params,
-                user_key,
-                true, -- is write
-                function() end,
-                'HINCRBY',
-                {user_key, 'rep', '-5'}
-            )
-            lua_redis.redis_make_request(task,
-                redis_params,
-                user_key,
-                true, -- is write
-                function() end,
-                'HINCRBY',
-                {user_key, 'banned_q', '1'}
-            )
-            task:insert_result('TG_BAN', 10.0)
-            rspamd_logger.infox(task, 'TG_BAN triggered for user %1, rep: %2', user_id, total)
         end
     end
     
@@ -405,7 +443,7 @@ local function tg_perm_ban_cb(task)
         end
         
         local banned_q = safe_num(data)
-        if banned_q > settings.banned_q then
+        if banned_q >= 3 then -- Changed from > to >= to trigger on 3rd ban
             local chat_key = settings.chat_prefix .. chat_id
             lua_redis.redis_make_request(task,
                 redis_params,

@@ -216,72 +216,112 @@ local function tg_ban_cb(task)
     
     local user_key = settings.user_prefix .. user_id
     
-    local function ban_cb(err, data)
-        if err then
-            utils.log_error(task, 'ban_cb', err)
-            return
-        end
-        
-        local total = utils.safe_num(data)
-        if total > settings.ban then
-            local chat_stats = settings.chat_prefix .. chat_id
-            lua_redis.redis_make_request(task,
-                redis_params,
-                chat_stats,
-                true, -- is write
-                function() end,
-                'HINCRBY',
-                {chat_stats, 'banned', '1'}
-            )
+    utils.if_feature_enabled(task, chat_id, 'ban', function()
+        local function ban_cb(err, data)
+            if err then
+                utils.log_error(task, 'ban_cb', err)
+                return
+            end
             
-            local function banned_cb(_err, _data)
-                if _err or not _data then return end
+            local total = utils.safe_num(data)
+            if total > settings.ban then
+                local chat_stats = settings.chat_prefix .. chat_id
+                lua_redis.redis_make_request(task,
+                    redis_params,
+                    chat_stats,
+                    true, -- is write
+                    function() end,
+                    'HINCRBY',
+                    {chat_stats, 'banned', '1'}
+                )
+                
+                -- Get current ban count
+                local function get_banned_q_cb(_err, _data)
+                    if _err then
+                        utils.log_error(task, 'get_banned_q_cb', _err)
+                        return
+                    end
+                    
+                    local banned_q = utils.safe_num(_data)
+                    
+                    -- Increment ban counter
+                    lua_redis.redis_make_request(task,
+                        redis_params,
+                        user_key,
+                        true, -- is write
+                        function() end,
+                        'HINCRBY',
+                        {user_key, 'banned_q', '1'}
+                    )
+                    
+                    -- Set ban flag with expiration
+                    local function banned_cb(__err, __data)
+                        if __err or not __data then return end
+                        lua_redis.redis_make_request(task,
+                            redis_params,
+                            user_key,
+                            true, -- is write
+                            function() end,
+                            'HEXPIRE',
+                            {user_key, settings.exp_ban, 'FIELDS', 1, 'banned'}
+                        )
+                    end
+                    
+                    lua_redis.redis_make_request(task,
+                        redis_params,
+                        user_key,
+                        true, -- is write
+                        banned_cb,
+                        'HSET',
+                        {user_key, 'banned', '1'}
+                    )
+                    
+                    -- Reduce reputation
+                    lua_redis.redis_make_request(task,
+                        redis_params,
+                        user_key,
+                        true, -- is write
+                        function() end,
+                        'HINCRBY',
+                        {user_key, 'rep', '-5'}
+                    )
+                    
+                    -- Set ban reduction time for automatic counter reduction
+                    local current_time = os.time()
+                    local reduction_time = current_time + settings.ban_reduction_interval
+                    lua_redis.redis_make_request(task,
+                        redis_params,
+                        user_key,
+                        true, -- is write
+                        function() end,
+                        'HSET',
+                        {user_key, 'ban_reduction_time', tostring(reduction_time)}
+                    )
+                    
+                    task:insert_result('TG_BAN', 10.0)
+                    utils.log_infox(task, 'TG_BAN triggered for user %1, rep: %2, ban count: %3', user_id, total, banned_q + 1)
+                end
+                
                 lua_redis.redis_make_request(task,
                     redis_params,
                     user_key,
-                    true, -- is write
-                    function() end,
-                    'HEXPIRE',
-                    {user_key, settings.exp_ban, 'FIELDS', 1, 'banned'}
+                    false, -- is write
+                    get_banned_q_cb,
+                    'HGET',
+                    {user_key, 'banned_q'}
                 )
             end
-            
-            lua_redis.redis_make_request(task,
-                redis_params,
-                user_key,
-                true, -- is write
-                banned_cb,
-                'HSET',
-                {user_key, 'banned', '1'}
-            )
-            lua_redis.redis_make_request(task,
-                redis_params,
-                user_key,
-                true, -- is write
-                function() end,
-                'HINCRBY',
-                {user_key, 'rep', '-5'}
-            )
-            lua_redis.redis_make_request(task,
-                redis_params,
-                user_key,
-                true, -- is write
-                function() end,
-                'HINCRBY',
-                {user_key, 'banned_q', '1'}
-            )
-            task:insert_result('TG_BAN', 10.0)
         end
-    end
-    
-    lua_redis.redis_make_request(task,
-        redis_params,
-        user_key,
-        false, -- is write
-        ban_cb,
-        'HGET',
-        {user_key, 'rep'}
-    )
+        
+        lua_redis.redis_make_request(task,
+            redis_params,
+            user_key,
+            false, -- is write
+            ban_cb,
+            'HGET',
+            {user_key, 'rep'}
+        )
+    end)
 end
 
 -- TG_PERM_BAN: Permanent ban system
@@ -291,35 +331,38 @@ local function tg_perm_ban_cb(task)
     
     local user_key = settings.user_prefix .. user_id
     
-    local function perm_ban_cb(err, data)
-        if err then
-            utils.log_error(task, 'perm_ban_cb', err)
-            return
+    utils.if_feature_enabled(task, chat_id, 'perm_ban', function()
+        local function perm_ban_cb(err, data)
+            if err then
+                utils.log_error(task, 'perm_ban_cb', err)
+                return
+            end
+            
+            local banned_q = utils.safe_num(data)
+            if banned_q >= 3 then -- Changed from > to >= to trigger on 3rd ban
+                local chat_stats = settings.chat_prefix .. chat_id
+                lua_redis.redis_make_request(task,
+                    redis_params,
+                    chat_stats,
+                    true, -- is write
+                    function() end,
+                    'HINCRBY',
+                    {chat_stats, 'perm_banned', '1'}
+                )
+                task:insert_result('TG_PERM_BAN', 15.0)
+                utils.log_infox(task, 'TG_PERM_BAN triggered for user %1, banned_q: %2', user_id, banned_q)
+            end
         end
         
-        local banned_q = utils.safe_num(data)
-        if banned_q > settings.banned_q then
-            local chat_stats = settings.chat_prefix .. chat_id
-            lua_redis.redis_make_request(task,
-                redis_params,
-                chat_stats,
-                true, -- is write
-                function() end,
-                'HINCRBY',
-                {chat_stats, 'perm_banned', '1'}
-            )
-            task:insert_result('TG_PERM_BAN', 15.0)
-        end
-    end
-    
-    lua_redis.redis_make_request(task,
-        redis_params,
-        user_key,
-        false, -- is write
-        perm_ban_cb,
-        'HGET',
-        {user_key, 'banned_q'}
-    )
+        lua_redis.redis_make_request(task,
+            redis_params,
+            user_key,
+            false, -- is write
+            perm_ban_cb,
+            'HGET',
+            {user_key, 'banned_q'}
+        )
+    end)
 end
 
 -- Register core symbols (scores defined in groups.conf)

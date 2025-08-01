@@ -28,6 +28,7 @@ local settings = {
     exp_flood = '60',
     exp_ban = '3600',
     banned_q = 3,
+    ban_reduction_interval = 172800, -- 48 hours in seconds
     
     -- Content thresholds
     link_spam = 3,
