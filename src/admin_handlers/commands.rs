@@ -19,4 +19,20 @@ pub enum AdminCommand {
     Blacklist { pattern: String },
     #[command(description = "Start managing features (callback flow)")]
     ManageFeatures,
+    #[command(description = "mark a message as trusted for reply-aware filtering.")]
+    MarkTrusted { args: String },
+    #[command(description = "show trust management statistics.")]
+    TrustStats,
+    #[command(description = "configure reply-aware filtering settings.")]
+    ReplyConfig { args: String },
+    #[command(description = "show rate limiting statistics.")]
+    RateLimitStats,
+    #[command(description = "reset rate limiting for a user.")]
+    ResetRateLimit { user: String },
+    #[command(description = "show spam pattern history for a user.")]
+    SpamPatterns { user: String },
+    #[command(description = "configure selective trusting rules.")]
+    SelectiveTrust { args: String },
+    #[command(description = "show anti-evasion statistics.")]
+    AntiEvasionStats,
 }

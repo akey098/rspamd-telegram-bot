@@ -16,6 +16,10 @@ pub mod key {
     pub const TG_WHITELIST_WORD_KEY: &str = "tg:whitelist:words";
     /// Key for blacklist of words
     pub const TG_BLACKLIST_WORD_KEY: &str = "tg:blacklist:words";
+    /// Prefix for trusted message IDs (e.g. `"tg:trusted:<message_id>"`)
+    pub const TG_TRUSTED_PREFIX: &str = "tg:trusted:";
+    /// Prefix for reply tracking (e.g. `"tg:replies:<chat_id>:<message_id>"`)
+    pub const TG_REPLIES_PREFIX: &str = "tg:replies:";
 }
 
 /// **Redis Key Suffixes:** common endings for composite Redis keys.
@@ -28,6 +32,8 @@ pub mod suffix {
     pub const MODERATED_CHATS: &str = ":moderated_chats";
     /// Suffix for admins of the chat
     pub const ADMINS: &str = ":admins";
+    /// Suffix for trusted message metadata (e.g. `"<message_id>:metadata"`)
+    pub const TRUSTED_METADATA: &str = ":metadata";
 }
 
 /// **Redis Hash Field Names:** keys within Redis hashes for user/chat properties.
@@ -56,6 +62,14 @@ pub mod field {
     pub const BANNED_Q: &str = "banned_q";
     /// Field storing the quantity of permanently banned users in the chat
     pub const PERM_BANNED: &str = "perm_banned";
+    /// Field storing trusted message sender ID
+    pub const TRUSTED_SENDER: &str = "trusted_sender";
+    /// Field storing trusted message chat ID
+    pub const TRUSTED_CHAT: &str = "trusted_chat";
+    /// Field storing trusted message timestamp
+    pub const TRUSTED_TIMESTAMP: &str = "trusted_timestamp";
+    /// Field storing trusted message type (bot, admin, verified)
+    pub const TRUSTED_TYPE: &str = "trusted_type";
 }
 
 /// **Rspamd Symbol Names:** spam detection symbols used by Rspamd and the bot.
@@ -117,6 +131,16 @@ pub mod symbol {
     pub const USER_REPUTATION_BAD: &str = "USER_REPUTATION_BAD";
     /// Symbol for good user reputation
     pub const USER_REPUTATION_GOOD: &str = "USER_REPUTATION_GOOD";
+    
+    // Reply-aware filtering symbols
+    /// Symbol for reply to trusted message (`TG_REPLY`)
+    pub const TG_REPLY: &str = "TG_REPLY";
+    /// Symbol for reply to bot message (`TG_REPLY_BOT`)
+    pub const TG_REPLY_BOT: &str = "TG_REPLY_BOT";
+    /// Symbol for reply to admin message (`TG_REPLY_ADMIN`)
+    pub const TG_REPLY_ADMIN: &str = "TG_REPLY_ADMIN";
+    /// Symbol for reply to verified user message (`TG_REPLY_VERIFIED`)
+    pub const TG_REPLY_VERIFIED: &str = "TG_REPLY_VERIFIED";
 }
 
 /// Features that are enabled for every chat by default.
@@ -150,12 +174,125 @@ pub const DEFAULT_FEATURES: &[&str] = &[
     "spam_chat",
     "shortener",
     "gibberish",
+    
+    // Reply-aware filtering features
+    "reply_aware",
+    "trusted_replies",
 ];
-
-
 
 /// Redis key storing the global set of features enabled by default.
 pub const ENABLED_FEATURES_KEY: &str = "tg:enabled_features";
 
 /// Ban counter reduction interval in seconds (48 hours)
 pub const BAN_COUNTER_REDUCTION_INTERVAL: i64 = 48 * 60 * 60; // 48 hours in seconds
+
+/// Trusted message TTL in seconds (24 hours)
+pub const TRUSTED_MESSAGE_TTL: i64 = 24 * 60 * 60; // 24 hours in seconds
+
+/// Reply tracking TTL in seconds (7 days)
+pub const REPLY_TRACKING_TTL: i64 = 7 * 24 * 60 * 60; // 7 days in seconds
+
+/// Advanced Reply-Aware Filtering Configuration
+pub mod reply_aware {
+    /// Maximum number of trusted messages a user can create per hour
+    pub const MAX_TRUSTED_MESSAGES_PER_HOUR: u32 = 10;
+    
+    /// Maximum number of replies to trusted messages per hour
+    pub const MAX_REPLIES_PER_HOUR: u32 = 50;
+    
+    /// Minimum time between trusted message creation (seconds)
+    pub const MIN_TRUSTED_MESSAGE_INTERVAL: u64 = 60; // 1 minute
+    
+    /// Rate limiting window for trusted message creation (seconds)
+    pub const TRUSTED_MESSAGE_RATE_WINDOW: u64 = 3600; // 1 hour
+    
+    /// Rate limiting window for replies (seconds)
+    pub const REPLY_RATE_WINDOW: u64 = 3600; // 1 hour
+    
+    /// Maximum score reduction for replies (prevents abuse)
+    pub const MAX_SCORE_REDUCTION: f64 = -5.0;
+    
+    /// Minimum score for spam patterns in replies (even to trusted messages)
+    pub const MIN_SPAM_SCORE_IN_REPLIES: f64 = 1.0;
+    
+    /// Enable selective trusting (only trust specific message types)
+    pub const ENABLE_SELECTIVE_TRUSTING: bool = true;
+    
+    /// Enable anti-evasion measures
+    pub const ENABLE_ANTI_EVASION: bool = true;
+    
+    /// Enable rate limiting for trusted message creation
+    pub const ENABLE_RATE_LIMITING: bool = true;
+    
+    /// Enable monitoring for spam patterns in replies
+    pub const ENABLE_SPAM_MONITORING: bool = true;
+    
+    /// Trust levels configuration
+    pub mod trust_levels {
+        /// Trust level for bot messages (highest)
+        pub const BOT_TRUST_LEVEL: f64 = -3.0;
+        
+        /// Trust level for admin messages (medium)
+        pub const ADMIN_TRUST_LEVEL: f64 = -2.0;
+        
+        /// Trust level for verified user messages (low)
+        pub const VERIFIED_TRUST_LEVEL: f64 = -1.0;
+        
+        /// Trust level for regular user messages (none)
+        pub const REGULAR_TRUST_LEVEL: f64 = 0.0;
+    }
+    
+    /// Anti-evasion thresholds
+    pub mod anti_evasion {
+        /// Maximum links allowed in reply to trusted message
+        pub const MAX_LINKS_IN_REPLY: u32 = 2;
+        
+        /// Maximum phone numbers allowed in reply to trusted message
+        pub const MAX_PHONE_NUMBERS_IN_REPLY: u32 = 1;
+        
+        /// Maximum invite links allowed in reply to trusted message
+        pub const MAX_INVITE_LINKS_IN_REPLY: u32 = 0;
+        
+        /// Maximum caps ratio allowed in reply to trusted message
+        pub const MAX_CAPS_RATIO_IN_REPLY: f64 = 0.5;
+        
+        /// Maximum emoji count allowed in reply to trusted message
+        pub const MAX_EMOJI_IN_REPLY: u32 = 5;
+    }
+}
+
+/// Redis keys for rate limiting and anti-evasion
+pub mod rate_limit {
+    /// Prefix for trusted message rate limiting (e.g. `"tg:rate:trusted:<user_id>"`)
+    pub const TRUSTED_MESSAGE_RATE_PREFIX: &str = "tg:rate:trusted:";
+    
+    /// Prefix for reply rate limiting (e.g. `"tg:rate:replies:<user_id>"`)
+    pub const REPLY_RATE_PREFIX: &str = "tg:rate:replies:";
+    
+    /// Prefix for spam pattern monitoring (e.g. `"tg:spam:replies:<user_id>"`)
+    pub const SPAM_PATTERN_PREFIX: &str = "tg:spam:replies:";
+}
+
+/// Configuration for selective trusting
+pub mod selective_trust {
+    /// Only trust replies to bot messages
+    pub const TRUST_BOT_MESSAGES: bool = true;
+    
+    /// Only trust replies to admin messages
+    pub const TRUST_ADMIN_MESSAGES: bool = true;
+    
+    /// Only trust replies to verified user messages
+    pub const TRUST_VERIFIED_MESSAGES: bool = false;
+    
+    /// Only trust replies to messages from users with good reputation
+    pub const TRUST_GOOD_REPUTATION: bool = true;
+    
+    /// Minimum reputation score required for trusting
+    pub const MIN_REPUTATION_FOR_TRUST: i64 = -2;
+    
+    /// Only trust replies to recent messages (within last hour)
+    pub const TRUST_RECENT_MESSAGES_ONLY: bool = true;
+    
+    /// Maximum age of trusted message (seconds)
+    pub const MAX_TRUSTED_MESSAGE_AGE: u64 = 3600; // 1 hour
+}

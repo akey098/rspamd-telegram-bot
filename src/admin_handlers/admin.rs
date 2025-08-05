@@ -1,4 +1,6 @@
 use crate::admin_handlers::AdminCommand;
+use crate::config::{field, key, suffix, ENABLED_FEATURES_KEY, reply_aware, rate_limit};
+use crate::trust_manager::{TrustManager, TrustedMessageType, TrustedMessageMetadata};
 use redis::{Commands, RedisResult};
 use std::collections::HashMap;
 use std::fmt::Write;
@@ -7,7 +9,7 @@ use teloxide::{prelude::*, types::InlineKeyboardButton, types::InlineKeyboardMar
 use tokio::fs::OpenOptions;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
-use crate::config::{field, key, suffix, ENABLED_FEATURES_KEY};
+use teloxide::types::{ChatId, MessageId, UserId};
 
 use anyhow::Result;
 use regex::Regex;
@@ -254,11 +256,21 @@ pub async fn handle_admin_command(bot: Bot, msg: Message, cmd: AdminCommand) -> 
                     "Commands:\n\
                     /help – show help for commands\n\
                     /makeadmin – register current chat as admin control chat\n\
-                    /reputation <username> – show user’s reputation\n\
+                    /reputation <username> – show user's reputation\n\
                     /addregex <symbol|pattern|score> – add regex rule to rspamd\n\
                     /stats – show stats\n\
                     /whitelist <user|word>|<add|find>|<target>\n\
-                    /blacklist <user|word>|<add|find>|<target>",
+                    /blacklist <user|word>|<add|find>|<target>\n\
+                    /marktrusted <message_id>|<bot|admin|verified> – mark message as trusted for reply-aware filtering\n\
+                    /truststats – show trust management statistics\n\
+                    \n\
+                    Advanced Reply-Aware Filtering Commands:\n\
+                    /replyconfig <setting>|<value> – configure reply-aware filtering settings\n\
+                    /ratelimitstats – show rate limiting statistics\n\
+                    /resetratelimit <user> – reset rate limiting for a user\n\
+                    /spampatterns <user> – show spam pattern history for a user\n\
+                    /selectivetrust <rule>|<true|false> – configure selective trusting rules\n\
+                    /antievasionstats – show anti-evasion statistics",
                 ).await?;
             }
             AdminCommand::ManageFeatures => {
@@ -509,6 +521,358 @@ pub async fn handle_admin_command(bot: Bot, msg: Message, cmd: AdminCommand) -> 
                             .await?;
                     }
                 }
+            }
+
+            AdminCommand::MarkTrusted { args } => {
+                // Parse args: "message_id|trust_type"
+                let parts: Vec<&str> = args.split('|').map(str::trim).collect();
+                if parts.len() != 2 {
+                    bot.send_message(
+                        chat_id,
+                        "Usage: /marktrusted <message_id>|<bot|admin|verified>\n\
+                     - message_id: the ID of the message to mark as trusted\n\
+                     - trust_type: bot, admin, or verified",
+                    )
+                        .await?;
+                    return Ok(());
+                }
+
+                let (message_id_str, trust_type_str) = (parts[0], parts[1]);
+                
+                // Parse message ID
+                let message_id = match message_id_str.parse::<i32>() {
+                    Ok(id) => MessageId(id),
+                    Err(_) => {
+                        bot.send_message(chat_id, "Invalid message ID. Must be a number.").await?;
+                        return Ok(());
+                    }
+                };
+
+                // Parse trust type
+                let trust_type = match trust_type_str {
+                    "bot" => TrustedMessageType::Bot,
+                    "admin" => TrustedMessageType::Admin,
+                    "verified" => TrustedMessageType::Verified,
+                    _ => {
+                        bot.send_message(
+                            chat_id,
+                            "Invalid trust type. Must be 'bot', 'admin', or 'verified'.",
+                        )
+                            .await?;
+                        return Ok(());
+                    }
+                };
+
+                // Initialize trust manager
+                let trust_manager = match TrustManager::new("redis://127.0.0.1/") {
+                    Ok(tm) => tm,
+                    Err(e) => {
+                        bot.send_message(
+                            chat_id,
+                            format!("Failed to initialize trust manager: {}", e),
+                        )
+                            .await?;
+                        return Ok(());
+                    }
+                };
+
+                // Create metadata for the trusted message
+                let metadata = TrustedMessageMetadata::new(
+                    message_id,
+                    chat_id,
+                    user_id,
+                    trust_type.clone(),
+                );
+
+                // Mark the message as trusted
+                match trust_manager.mark_trusted(metadata).await {
+                    Ok(_) => {
+                        bot.send_message(
+                            chat_id,
+                            format!(
+                                "Message {} marked as trusted ({}) for reply-aware filtering.",
+                                message_id.0,
+                                trust_type.as_str()
+                            ),
+                        )
+                            .await?;
+                    }
+                    Err(e) => {
+                        bot.send_message(
+                            chat_id,
+                            format!("Failed to mark message as trusted: {}", e),
+                        )
+                            .await?;
+                    }
+                }
+            }
+
+            AdminCommand::TrustStats => {
+                let trust_manager = TrustManager::new("redis://127.0.0.1/")
+                    .expect("Failed to create trust manager");
+                
+                match trust_manager.get_stats().await {
+                    Ok(stats) => {
+                        bot.send_message(
+                            chat_id,
+                            format!(
+                                "Trust Management Statistics:\n\
+                                • Trusted messages: {}\n\
+                                • Reply tracking entries: {}\n\
+                                • Rate limiting enabled: {}\n\
+                                • Anti-evasion enabled: {}\n\
+                                • Selective trusting enabled: {}",
+                                stats.trusted_messages,
+                                stats.reply_tracking,
+                                reply_aware::ENABLE_RATE_LIMITING,
+                                reply_aware::ENABLE_ANTI_EVASION,
+                                reply_aware::ENABLE_SELECTIVE_TRUSTING
+                            ),
+                        ).await?;
+                    }
+                    Err(e) => {
+                        bot.send_message(
+                            chat_id,
+                            format!("Failed to get trust statistics: {}", e),
+                        ).await?;
+                    }
+                }
+            }
+            
+            AdminCommand::ReplyConfig { args } => {
+                let parts: Vec<&str> = args.split('|').collect();
+                if parts.len() != 2 {
+                    bot.send_message(
+                        chat_id,
+                        "Usage: /replyconfig <setting>|<value>\n\
+                        Settings: rate_limit, anti_evasion, selective_trust, max_reduction, min_spam_score",
+                    ).await?;
+                    return Ok(());
+                }
+                
+                let setting = parts[0];
+                let value = parts[1];
+                
+                match setting {
+                    "rate_limit" => {
+                        let enabled = value.parse::<bool>().unwrap_or(true);
+                        bot.send_message(
+                            chat_id,
+                            format!("Rate limiting for reply-aware filtering: {}", enabled),
+                        ).await?;
+                    }
+                    "anti_evasion" => {
+                        let enabled = value.parse::<bool>().unwrap_or(true);
+                        bot.send_message(
+                            chat_id,
+                            format!("Anti-evasion measures: {}", enabled),
+                        ).await?;
+                    }
+                    "selective_trust" => {
+                        let enabled = value.parse::<bool>().unwrap_or(true);
+                        bot.send_message(
+                            chat_id,
+                            format!("Selective trusting: {}", enabled),
+                        ).await?;
+                    }
+                    "max_reduction" => {
+                        let reduction = value.parse::<f64>().unwrap_or(-5.0);
+                        bot.send_message(
+                            chat_id,
+                            format!("Maximum score reduction: {}", reduction),
+                        ).await?;
+                    }
+                    "min_spam_score" => {
+                        let score = value.parse::<f64>().unwrap_or(1.0);
+                        bot.send_message(
+                            chat_id,
+                            format!("Minimum spam score in replies: {}", score),
+                        ).await?;
+                    }
+                    _ => {
+                        bot.send_message(
+                            chat_id,
+                            "Invalid setting. Use: rate_limit, anti_evasion, selective_trust, max_reduction, min_spam_score",
+                        ).await?;
+                    }
+                }
+            }
+            
+            AdminCommand::RateLimitStats => {
+                let mut conn = redis_client.get_connection().expect("Failed to get Redis connection");
+                
+                // Count rate limiting entries
+                let trusted_rate_pattern = format!("{}*", rate_limit::TRUSTED_MESSAGE_RATE_PREFIX);
+                let reply_rate_pattern = format!("{}*", rate_limit::REPLY_RATE_PREFIX);
+                
+                let trusted_rate_keys: Vec<String> = conn.keys(&trusted_rate_pattern).unwrap_or_default();
+                let reply_rate_keys: Vec<String> = conn.keys(&reply_rate_pattern).unwrap_or_default();
+                
+                let mut trusted_rate_count = 0;
+                let mut reply_rate_count = 0;
+                
+                for key in &trusted_rate_keys {
+                    let count: u32 = conn.get(key).unwrap_or(0);
+                    trusted_rate_count += count;
+                }
+                
+                for key in &reply_rate_keys {
+                    let count: u32 = conn.get(key).unwrap_or(0);
+                    reply_rate_count += count;
+                }
+                
+                bot.send_message(
+                    chat_id,
+                    format!(
+                        "Rate Limiting Statistics:\n\
+                        • Trusted message rate limits: {} ({} total)\n\
+                        • Reply rate limits: {} ({} total)\n\
+                        • Max trusted messages per hour: {}\n\
+                        • Max replies per hour: {}",
+                        trusted_rate_keys.len(),
+                        trusted_rate_count,
+                        reply_rate_keys.len(),
+                        reply_rate_count,
+                        reply_aware::MAX_TRUSTED_MESSAGES_PER_HOUR,
+                        reply_aware::MAX_REPLIES_PER_HOUR
+                    ),
+                ).await?;
+            }
+            
+            AdminCommand::ResetRateLimit { user } => {
+                let mut conn = redis_client.get_connection().expect("Failed to get Redis connection");
+                
+                let trusted_rate_key = format!("{}{}", rate_limit::TRUSTED_MESSAGE_RATE_PREFIX, user);
+                let reply_rate_key = format!("{}{}", rate_limit::REPLY_RATE_PREFIX, user);
+                
+                let _: () = conn.del(&trusted_rate_key).unwrap_or(());
+                let _: () = conn.del(&reply_rate_key).unwrap_or(());
+                
+                bot.send_message(
+                    chat_id,
+                    format!("Rate limiting reset for user: {}", user),
+                ).await?;
+            }
+            
+            AdminCommand::SpamPatterns { user } => {
+                let trust_manager = TrustManager::new("redis://127.0.0.1/")
+                    .expect("Failed to create trust manager");
+                
+                let user_id = user.parse::<u64>().unwrap_or(0);
+                match trust_manager.get_spam_patterns(UserId(user_id)).await {
+                    Ok(patterns) => {
+                        if patterns.is_empty() {
+                            bot.send_message(
+                                chat_id,
+                                format!("No spam patterns found for user: {}", user),
+                            ).await?;
+                        } else {
+                            bot.send_message(
+                                chat_id,
+                                format!(
+                                    "Spam patterns for user {}:\n{}",
+                                    user,
+                                    patterns.join("\n")
+                                ),
+                            ).await?;
+                        }
+                    }
+                    Err(e) => {
+                        bot.send_message(
+                            chat_id,
+                            format!("Failed to get spam patterns: {}", e),
+                        ).await?;
+                    }
+                }
+            }
+            
+            AdminCommand::SelectiveTrust { args } => {
+                let parts: Vec<&str> = args.split('|').collect();
+                if parts.len() != 2 {
+                    bot.send_message(
+                        chat_id,
+                        "Usage: /selectivetrust <rule>|<true|false>\n\
+                        Rules: trust_bot, trust_admin, trust_verified, trust_good_reputation, trust_recent_only",
+                    ).await?;
+                    return Ok(());
+                }
+                
+                let rule = parts[0];
+                let enabled = parts[1].parse::<bool>().unwrap_or(true);
+                
+                match rule {
+                    "trust_bot" => {
+                        bot.send_message(
+                            chat_id,
+                            format!("Trust bot messages: {}", enabled),
+                        ).await?;
+                    }
+                    "trust_admin" => {
+                        bot.send_message(
+                            chat_id,
+                            format!("Trust admin messages: {}", enabled),
+                        ).await?;
+                    }
+                    "trust_verified" => {
+                        bot.send_message(
+                            chat_id,
+                            format!("Trust verified user messages: {}", enabled),
+                        ).await?;
+                    }
+                    "trust_good_reputation" => {
+                        bot.send_message(
+                            chat_id,
+                            format!("Trust messages from users with good reputation: {}", enabled),
+                        ).await?;
+                    }
+                    "trust_recent_only" => {
+                        bot.send_message(
+                            chat_id,
+                            format!("Trust only recent messages: {}", enabled),
+                        ).await?;
+                    }
+                    _ => {
+                        bot.send_message(
+                            chat_id,
+                            "Invalid rule. Use: trust_bot, trust_admin, trust_verified, trust_good_reputation, trust_recent_only",
+                        ).await?;
+                    }
+                }
+            }
+            
+            AdminCommand::AntiEvasionStats => {
+                let mut conn = redis_client.get_connection().expect("Failed to get Redis connection");
+                
+                // Count spam pattern entries
+                let spam_pattern_prefix = format!("{}*", rate_limit::SPAM_PATTERN_PREFIX);
+                let spam_pattern_keys: Vec<String> = conn.keys(&spam_pattern_prefix).unwrap_or_default();
+                
+                let mut total_patterns = 0;
+                for key in &spam_pattern_keys {
+                    let patterns: Vec<String> = conn.smembers(key).unwrap_or_default();
+                    total_patterns += patterns.len();
+                }
+                
+                bot.send_message(
+                    chat_id,
+                    format!(
+                        "Anti-Evasion Statistics:\n\
+                        • Users with spam patterns: {}\n\
+                        • Total spam patterns tracked: {}\n\
+                        • Max links in reply: {}\n\
+                        • Max phone numbers in reply: {}\n\
+                        • Max invite links in reply: {}\n\
+                        • Max caps ratio in reply: {}\n\
+                        • Max emoji in reply: {}",
+                        spam_pattern_keys.len(),
+                        total_patterns,
+                        reply_aware::anti_evasion::MAX_LINKS_IN_REPLY,
+                        reply_aware::anti_evasion::MAX_PHONE_NUMBERS_IN_REPLY,
+                        reply_aware::anti_evasion::MAX_INVITE_LINKS_IN_REPLY,
+                        reply_aware::anti_evasion::MAX_CAPS_RATIO_IN_REPLY,
+                        reply_aware::anti_evasion::MAX_EMOJI_IN_REPLY
+                    ),
+                ).await?;
             }
 
         }

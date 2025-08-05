@@ -1,5 +1,6 @@
 use crate::config::{field, key, BAN_COUNTER_REDUCTION_INTERVAL, symbol};
 use crate::handlers::scan_msg;
+use crate::trust_manager::TrustManager;
 use chrono::{Duration, Utc};
 use redis::Commands;
 use std::error::Error;
@@ -39,6 +40,11 @@ pub async fn handle_message(
     } else {
         return Ok(());
     };
+    
+    // Initialize trust manager for reply-aware filtering
+    let _trust_manager = TrustManager::new("redis://127.0.0.1/")
+        .map_err(|e| format!("Failed to create trust manager: {}", e))?;
+    
     let result = scan_msg(message.clone(), text).await;
     let scan_result = match result {
         Ok(scan_result) => scan_result,
@@ -53,7 +59,13 @@ pub async fn handle_message(
     let has_bad_reputation = scan_result.symbols.iter().any(|s| s.0 == symbol::USER_REPUTATION_BAD);
     let has_good_reputation = scan_result.symbols.iter().any(|s| s.0 == symbol::USER_REPUTATION_GOOD);
     
-    // Adjust score based on reputation
+    // Check for reply-aware filtering symbols
+    let has_reply_symbol = scan_result.symbols.iter().any(|s| s.0 == symbol::TG_REPLY);
+    let has_reply_bot = scan_result.symbols.iter().any(|s| s.0 == symbol::TG_REPLY_BOT);
+    let has_reply_admin = scan_result.symbols.iter().any(|s| s.0 == symbol::TG_REPLY_ADMIN);
+    let has_reply_verified = scan_result.symbols.iter().any(|s| s.0 == symbol::TG_REPLY_VERIFIED);
+    
+    // Adjust score based on reputation and reply context
     let mut adjusted_score = scan_result.score;
     if has_user_reputation {
         println!("User reputation symbol detected");
@@ -64,6 +76,24 @@ pub async fn handle_message(
     } else if has_good_reputation {
         adjusted_score -= 1.0; // Reduce score for good reputation
         println!("User has good reputation, adjusting score by -1.0");
+    }
+    
+    // Apply reply-aware filtering adjustments
+    if has_reply_symbol {
+        println!("Reply symbol detected - applying contextual filtering");
+        if has_reply_bot {
+            adjusted_score -= 3.0; // Highest trust for replies to bot messages
+            println!("Reply to bot message detected, adjusting score by -3.0");
+        } else if has_reply_admin {
+            adjusted_score -= 2.0; // Medium trust for replies to admin messages
+            println!("Reply to admin message detected, adjusting score by -2.0");
+        } else if has_reply_verified {
+            adjusted_score -= 1.0; // Lower trust for replies to verified users
+            println!("Reply to verified user message detected, adjusting score by -1.0");
+        } else {
+            adjusted_score -= 0.5; // Small reduction for any reply
+            println!("General reply detected, adjusting score by -0.5");
+        }
     }
     
     // Determine action based on adjusted score
