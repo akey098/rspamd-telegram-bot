@@ -1,0 +1,41 @@
+version: '3.8'
+
+services:
+  bot:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    environment:
+      - TELOXIDE_TOKEN=${TELOXIDE_TOKEN}
+      - RSPAMD_PASSWORD=superSecret
+    ports: 
+      - "11334:11334"  # controller
+    depends_on:
+      - rspamd
+    restart: unless-stopped
+    volumes:
+      - ./logs:/var/log
+      - ./data:/var/lib
+
+  rspamd:
+    image: rspamd/rspamd:latest
+    volumes:
+      - ./rspamd-config:/etc/rspamd/local.d
+      - fuzzy-db:/var/lib/rspamd
+      - ./logs:/var/log
+    ports:
+      - "11333:11333"       # scan
+      - "11335:11335/udp"   # fuzzy worker
+      - "11334:11334"       # controller
+    environment:
+      - RSPAMD_PASSWORD=superSecret
+    restart: unless-stopped
+    command: ["rspamd", "-f", "-u", "rspamd", "-g", "rspamd"]
+
+volumes:
+  fuzzy-db:
+    driver: local
+
+networks:
+  default:
+    name: rspamd-telegram-bot-network

@@ -1,11 +1,15 @@
 use crate::config::{field, key, BAN_COUNTER_REDUCTION_INTERVAL, symbol};
 use crate::handlers::scan_msg;
 use crate::trust_manager::TrustManager;
+use crate::fuzzy_trainer::FuzzyTrainer;
 use chrono::{Duration, Utc};
 use redis::Commands;
 use std::error::Error;
 use teloxide::prelude::*;
 use teloxide::types::{ChatPermissions, ChatMemberStatus};
+use once_cell::sync::Lazy;
+
+static FUZZY_TRAINER: Lazy<FuzzyTrainer> = Lazy::new(|| FuzzyTrainer::new());
 
 async fn check_bot_permissions(bot: &Bot, chat_id: ChatId) -> anyhow::Result<()> {
     match bot.get_chat_member(chat_id, bot.get_me().await?.id).await {
@@ -40,6 +44,9 @@ pub async fn handle_message(
     } else {
         return Ok(());
     };
+    
+    // Store text for fuzzy training
+    let text_for_fuzzy = text.clone();
     
     // Initialize trust manager for reply-aware filtering
     let _trust_manager = TrustManager::new("redis://127.0.0.1/")
@@ -141,6 +148,11 @@ pub async fn handle_message(
                 message.id, chat_id, user_id
             );
 
+            // Teach fuzzy storage after deletion
+            if let Err(e) = FUZZY_TRAINER.teach_fuzzy(&text_for_fuzzy).await {
+                eprintln!("Failed to teach fuzzy storage: {}", e);
+            }
+
             // Get user key for Redis operations
             let user_key = format!("{}{}", key::TG_USERS_PREFIX, user_id);
             
@@ -208,6 +220,11 @@ pub async fn handle_message(
             let _ = bot.ban_chat_member(chat_id, user_id).await;
             println!("User {} in chat {} permanently banned", user_id, chat_id);
 
+            // Teach fuzzy storage after deletion
+            if let Err(e) = FUZZY_TRAINER.teach_fuzzy(&text_for_fuzzy).await {
+                eprintln!("Failed to teach fuzzy storage: {}", e);
+            }
+
             let notify_text = format!("Banned user {} in chat {} for spam", user_id, chat_id);
             if admin_chat_exists {
                 bot.send_message(ChatId(admin_chat[0]), notify_text).await?;
@@ -223,6 +240,11 @@ pub async fn handle_message(
                 message.id, chat_id
             );
             bot.delete_message(chat_id, message.id).await?;
+            
+            // Teach fuzzy storage after deletion
+            if let Err(e) = FUZZY_TRAINER.teach_fuzzy(&text_for_fuzzy).await {
+                eprintln!("Failed to teach fuzzy storage: {}", e);
+            }
             let _: () = redis_conn
                 .hincr(key.clone(), field::DELETED, 1)
                 .expect("Failed to update deleted count");

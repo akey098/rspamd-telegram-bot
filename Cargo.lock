@@ -1842,6 +1842,7 @@ dependencies = [
  "pretty_env_logger",
  "redis",
  "regex",
+ "reqwest",
  "rspamd-client",
  "serde_json",
  "serial_test",

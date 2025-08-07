@@ -72,6 +72,22 @@ pub mod field {
     pub const TRUSTED_TYPE: &str = "trusted_type";
 }
 
+
+
+/// **Rspamd Configuration:** settings for Rspamd fuzzy storage integration.
+pub mod rspamd {
+    /// URL for the Rspamd controller API.
+    pub const CONTROLLER_URL: &str = "http://127.0.0.1:11334";
+    /// Password for authenticating with the Rspamd controller.
+    pub const PASSWORD: &str = "superSecret";
+    /// Flag value for fuzzy storage entries.
+    pub const FUZZY_FLAG: u8 = 1;
+    /// Weight value for fuzzy storage entries.
+    pub const FUZZY_WEIGHT: i32 = 10;
+    /// Minimum text length required for fuzzy training.
+    pub const MIN_TEXT_LENGTH: usize = 8;
+}
+
 /// **Rspamd Symbol Names:** spam detection symbols used by Rspamd and the bot.
 pub mod symbol {
     /// Symbol for flooding behavior detected (`TG_FLOOD`).
@@ -102,45 +118,48 @@ pub mod symbol {
     pub const TG_CAPS: &str = "TG_CAPS";
     /// Symbol for excessive emoji usage (`TG_EMOJI_SPAM`).
     pub const TG_EMOJI_SPAM: &str = "TG_EMOJI_SPAM";
-    
-    // Heuristic-based symbols
-    /// Symbol for Telegram invite links (`TG_INVITE_LINK`).
+    /// Symbol for invite link spam (`TG_INVITE_LINK`).
     pub const TG_INVITE_LINK: &str = "TG_INVITE_LINK";
-    /// Symbol for phone number spam patterns (`TG_PHONE_SPAM`).
+    /// Symbol for phone number spam (`TG_PHONE_SPAM`).
     pub const TG_PHONE_SPAM: &str = "TG_PHONE_SPAM";
-    /// Symbol for spam chat links (`TG_SPAM_CHAT`).
+    /// Symbol for spam chat detection (`TG_SPAM_CHAT`).
     pub const TG_SPAM_CHAT: &str = "TG_SPAM_CHAT";
-    /// Symbol for URL shortener links (`TG_SHORTENER`).
+    /// Symbol for URL shortener spam (`TG_SHORTENER`).
     pub const TG_SHORTENER: &str = "TG_SHORTENER";
-    /// Symbol for gibberish text patterns (`TG_GIBBERISH`).
+    /// Symbol for gibberish text detection (`TG_GIBBERISH`).
     pub const TG_GIBBERISH: &str = "TG_GIBBERISH";
     
-    /// Symbol for whitelist of users
+    // Whitelist/Blacklist symbols
+    /// Symbol for whitelisted user (`WHITELIST_USER`).
     pub const WHITELIST_USER: &str = "WHITELIST_USER";
-    /// Symbol for blacklist of users
+    /// Symbol for blacklisted user (`BLACKLIST_USER`).
     pub const BLACKLIST_USER: &str = "BLACKLIST_USER";
-    /// Symbol for whitelist of words
+    /// Symbol for whitelisted word (`WHITELIST_WORD`).
     pub const WHITELIST_WORD: &str = "WHITELIST_WORD";
-    /// Symbol for blacklist of words
+    /// Symbol for blacklisted word (`BLACKLIST_WORD`).
     pub const BLACKLIST_WORD: &str = "BLACKLIST_WORD";
     
-    // Reputation-based symbols (from Rspamd reputation plugin)
-    /// Symbol for user reputation (from Rspamd reputation plugin)
+    // Reputation symbols
+    /// Symbol for user reputation adjustment (`USER_REPUTATION`).
     pub const USER_REPUTATION: &str = "USER_REPUTATION";
-    /// Symbol for bad user reputation
+    /// Symbol for bad user reputation (`USER_REPUTATION_BAD`).
     pub const USER_REPUTATION_BAD: &str = "USER_REPUTATION_BAD";
-    /// Symbol for good user reputation
+    /// Symbol for good user reputation (`USER_REPUTATION_GOOD`).
     pub const USER_REPUTATION_GOOD: &str = "USER_REPUTATION_GOOD";
     
     // Reply-aware filtering symbols
-    /// Symbol for reply to trusted message (`TG_REPLY`)
+    /// Symbol for reply detection (`TG_REPLY`).
     pub const TG_REPLY: &str = "TG_REPLY";
-    /// Symbol for reply to bot message (`TG_REPLY_BOT`)
+    /// Symbol for reply to bot message (`TG_REPLY_BOT`).
     pub const TG_REPLY_BOT: &str = "TG_REPLY_BOT";
-    /// Symbol for reply to admin message (`TG_REPLY_ADMIN`)
+    /// Symbol for reply to admin message (`TG_REPLY_ADMIN`).
     pub const TG_REPLY_ADMIN: &str = "TG_REPLY_ADMIN";
-    /// Symbol for reply to verified user message (`TG_REPLY_VERIFIED`)
+    /// Symbol for reply to verified user message (`TG_REPLY_VERIFIED`).
     pub const TG_REPLY_VERIFIED: &str = "TG_REPLY_VERIFIED";
+    
+    // Fuzzy storage symbol
+    /// Symbol for fuzzy storage detection (`FUZZY_DENIED`).
+    pub const FUZZY_DENIED: &str = "FUZZY_DENIED";
 }
 
 /// Features that are enabled for every chat by default.
