@@ -6,6 +6,7 @@ use tokio::time;
 use rspamd_telegram_bot::config::{field, key};
 use rspamd_telegram_bot::admin_handlers;
 use rspamd_telegram_bot::ban_manager::BanManager;
+use rspamd_telegram_bot::bayes_manager::BayesManager;
 use rspamd_telegram_bot::migration;
 use std::env;
 
@@ -51,6 +52,19 @@ async fn main() {
                 interval.tick().await;
                 if let Err(err) = do_periodic().await {
                     log::error!("Periodic task failed: {:?}", err);
+                }
+            }
+        }
+    });
+
+    // Start Bayes performance monitoring
+    tokio::spawn({
+        async move {
+            let mut interval = time::interval(Duration::from_secs(7200)); // Every 2 hours
+            loop {
+                interval.tick().await;
+                if let Err(err) = monitor_bayes_performance().await {
+                    log::error!("Bayes monitoring failed: {:?}", err);
                 }
             }
         }
@@ -108,5 +122,28 @@ async fn do_periodic() -> Result<(), Box<dyn Error + Send + Sync>> {
         }
     }
 
+    Ok(())
+}
+
+async fn monitor_bayes_performance() -> Result<(), Box<dyn Error + Send + Sync>> {
+    let bayes_manager = BayesManager::new()?;
+    let stats = bayes_manager.get_bayes_stats()?;
+    
+    log::info!(
+        "Bayes stats - Spam: {} tokens, {} messages | Ham: {} tokens, {} messages",
+        stats.get("spam_tokens").unwrap_or(&0),
+        stats.get("spam_messages").unwrap_or(&0),
+        stats.get("ham_tokens").unwrap_or(&0),
+        stats.get("ham_messages").unwrap_or(&0)
+    );
+    
+    // Check if classifier is ready
+    let is_ready = bayes_manager.is_ready()?;
+    if is_ready {
+        log::info!("Bayes classifier is ready for classification");
+    } else {
+        log::info!("Bayes classifier is still training");
+    }
+    
     Ok(())
 }
