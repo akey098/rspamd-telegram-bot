@@ -1844,6 +1844,7 @@ dependencies = [
  "regex",
  "reqwest",
  "rspamd-client",
+ "serde",
  "serde_json",
  "serial_test",
  "teloxide",
