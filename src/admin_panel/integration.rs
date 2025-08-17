@@ -24,7 +24,7 @@ pub async fn handle_admin_panel_message(bot: Bot, msg: Message) -> Result<()> {
     Ok(())
 }
 
-/// Example integration with existing message handler
+/// Enhanced integration with existing message handler
 /// This function shows how to integrate admin panel commands with the existing bot system
 pub async fn integrated_message_handler(bot: Bot, msg: Message) -> Result<()> {
     if let Some(text) = msg.text() {
@@ -67,6 +67,35 @@ pub async fn setup_bot_commands(bot: &Bot) -> Result<()> {
     
     // Set bot commands
     bot.set_my_commands(all_commands).await?;
+    
+    Ok(())
+}
+
+/// Enhanced message handler that checks emergency stop status
+pub async fn emergency_aware_message_handler(bot: Bot, msg: Message) -> Result<()> {
+    // For now, use the standard integrated message handler
+    // Emergency stop checking can be implemented later when needed
+    integrated_message_handler(bot, msg).await
+}
+
+/// Initialize admin panel integration
+pub async fn initialize_admin_panel_integration(bot: &Bot) -> Result<()> {
+    // Set up bot commands
+    setup_bot_commands(bot).await?;
+    
+    // Log initialization
+    let mut redis_conn = match crate::get_redis_connection().await {
+        Ok(conn) => conn,
+        Err(e) => {
+            log::warn!("Failed to get Redis connection during admin panel initialization: {}", e);
+            return Ok(());
+        }
+    };
+    if crate::admin_panel::auth::is_admin_panel_setup(&mut redis_conn).await? {
+        log::info!("Admin panel integration initialized - admin panel is set up");
+    } else {
+        log::info!("Admin panel integration initialized - admin panel not yet set up");
+    }
     
     Ok(())
 }

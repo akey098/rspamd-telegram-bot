@@ -1,8 +1,9 @@
 //! Admin Panel Authentication System
 
 use anyhow::Result;
-use redis::AsyncCommands;
+use redis::{AsyncCommands, Commands};
 use teloxide::{
+    prelude::Requester,
     types::{Chat, ChatId, ChatMemberStatus, User, UserId},
     Bot,
 };
@@ -16,13 +17,13 @@ use crate::admin_panel::{
 
 /// Check if the admin panel is set up
 pub async fn is_admin_panel_setup(redis_conn: &mut redis::Connection) -> Result<bool> {
-    let chat_id: Option<String> = redis_conn.get(key::ADMIN_PANEL_CHAT_KEY).await?;
+    let chat_id: Option<String> = redis_conn.get(key::ADMIN_PANEL_CHAT_KEY)?;
     Ok(chat_id.is_some())
 }
 
 /// Get the admin panel chat ID
 pub async fn get_admin_panel_chat_id(redis_conn: &mut redis::Connection) -> Result<Option<ChatId>> {
-    let chat_id_str: Option<String> = redis_conn.get(key::ADMIN_PANEL_CHAT_KEY).await?;
+    let chat_id_str: Option<String> = redis_conn.get(key::ADMIN_PANEL_CHAT_KEY)?;
     match chat_id_str {
         Some(id_str) => {
             let chat_id = id_str.parse::<i64>()?;

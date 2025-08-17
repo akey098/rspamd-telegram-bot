@@ -17,6 +17,8 @@ pub enum AdminPermission {
     ConfigureBot,
     /// View audit logs
     ViewAuditLog,
+    /// View bot configuration
+    ViewConfig,
     /// Emergency control (stop/resume monitoring)
     EmergencyControl,
     /// Full access to all features
@@ -31,6 +33,7 @@ impl std::fmt::Display for AdminPermission {
             AdminPermission::ManageUsers => write!(f, "Manage Users"),
             AdminPermission::ConfigureBot => write!(f, "Configure Bot"),
             AdminPermission::ViewAuditLog => write!(f, "View Audit Log"),
+            AdminPermission::ViewConfig => write!(f, "View Configuration"),
             AdminPermission::EmergencyControl => write!(f, "Emergency Control"),
             AdminPermission::FullAccess => write!(f, "Full Access"),
         }
@@ -46,6 +49,7 @@ impl AdminPermission {
             AdminPermission::ManageUsers => "manage_users".to_string(),
             AdminPermission::ConfigureBot => "configure_bot".to_string(),
             AdminPermission::ViewAuditLog => "view_audit_log".to_string(),
+            AdminPermission::ViewConfig => "view_config".to_string(),
             AdminPermission::EmergencyControl => "emergency_control".to_string(),
             AdminPermission::FullAccess => "full_access".to_string(),
         }
@@ -59,6 +63,7 @@ impl AdminPermission {
             "manage_users" => Some(AdminPermission::ManageUsers),
             "configure_bot" => Some(AdminPermission::ConfigureBot),
             "view_audit_log" => Some(AdminPermission::ViewAuditLog),
+            "view_config" => Some(AdminPermission::ViewConfig),
             "emergency_control" => Some(AdminPermission::EmergencyControl),
             "full_access" => Some(AdminPermission::FullAccess),
             _ => None,
@@ -73,6 +78,7 @@ impl AdminPermission {
             AdminPermission::ManageUsers,
             AdminPermission::ConfigureBot,
             AdminPermission::ViewAuditLog,
+            AdminPermission::ViewConfig,
             AdminPermission::EmergencyControl,
             AdminPermission::FullAccess,
         ]
@@ -182,6 +188,7 @@ impl PermissionGroup {
                 AdminPermission::ManageUsers,
                 AdminPermission::ConfigureBot,
                 AdminPermission::ViewAuditLog,
+                AdminPermission::ViewConfig,
             ],
             PermissionGroup::Administrator => vec![
                 AdminPermission::FullAccess,
