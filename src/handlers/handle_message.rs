@@ -1,7 +1,8 @@
-use crate::config::{field, key, BAN_COUNTER_REDUCTION_INTERVAL, symbol};
+use crate::config::{field, key, BAN_COUNTER_REDUCTION_INTERVAL, symbol, bayes};
 use crate::handlers::scan_msg;
 use crate::trust_manager::TrustManager;
 use crate::fuzzy_trainer::FuzzyTrainer;
+use crate::bayes_manager::BayesManager;
 use chrono::{Duration, Utc};
 use redis::Commands;
 use std::error::Error;
@@ -52,7 +53,7 @@ pub async fn handle_message(
     let _trust_manager = TrustManager::new("redis://127.0.0.1/")
         .map_err(|e| format!("Failed to create trust manager: {}", e))?;
     
-    let result = scan_msg(message.clone(), text).await;
+    let result = scan_msg(message.clone(), text.clone()).await;
     let scan_result = match result {
         Ok(scan_result) => scan_result,
         Err(e) => {
@@ -60,6 +61,37 @@ pub async fn handle_message(
             return Ok(());
         }
     };
+    
+    // Auto-learning integration for Bayesian classifier
+    let bayes_manager = BayesManager::new();
+    if let Ok(bayes) = bayes_manager {
+        let score = scan_result.score;
+        let message_id = message.id.0.to_string();
+        // Auto-learn high-scoring messages as spam
+        if score >= bayes::AUTOLEARN_SPAM_THRESHOLD {
+            match bayes.learn_spam(&message_id, &text).await {
+                Ok(()) => {
+                    println!("Auto-learned message {} as spam (score: {})", message_id, score);
+                }
+                Err(e) => {
+                    eprintln!("Failed to auto-learn message {} as spam: {}", message_id, e);
+                }
+            }
+        }
+        // Auto-learn very low-scoring messages as ham
+        else if score <= bayes::AUTOLEARN_HAM_THRESHOLD {
+            match bayes.learn_ham(&message_id, &text).await {
+                Ok(()) => {
+                    println!("Auto-learned message {} as ham (score: {})", message_id, score);
+                }
+                Err(e) => {
+                    eprintln!("Failed to auto-learn message {} as ham: {}", message_id, e);
+                }
+            }
+        }
+    } else {
+        eprintln!("Failed to create Bayes manager for auto-learning");
+    }
     
     // Check for reputation symbols and adjust score
     let has_user_reputation = scan_result.symbols.iter().any(|s| s.0 == symbol::USER_REPUTATION);

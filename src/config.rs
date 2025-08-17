@@ -106,6 +106,10 @@ pub mod bayes {
     pub const MIN_HAM_MESSAGES: i64 = 200;
     /// Expiration time for learned message tracking (24 hours in seconds).
     pub const LEARNED_EXPIRY: u64 = 86400;
+    /// Auto-learning threshold for spam (messages with score >= this value are learned as spam).
+    pub const AUTOLEARN_SPAM_THRESHOLD: f64 = 6.0;
+    /// Auto-learning threshold for ham (messages with score <= this value are learned as ham).
+    pub const AUTOLEARN_HAM_THRESHOLD: f64 = -0.5;
 }
 
 /// **Rspamd Symbol Names:** spam detection symbols used by Rspamd and the bot.
