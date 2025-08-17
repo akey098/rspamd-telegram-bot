@@ -88,6 +88,26 @@ pub mod rspamd {
     pub const MIN_TEXT_LENGTH: usize = 8;
 }
 
+/// **Bayes Configuration:** settings for Bayesian classifier integration.
+pub mod bayes {
+    /// Key for Bayes spam tokens in Redis.
+    pub const BAYES_SPAM_KEY: &str = "bayes_spam";
+    /// Key for Bayes ham tokens in Redis.
+    pub const BAYES_HAM_KEY: &str = "bayes_ham";
+    /// Key for Bayes spam message counter in Redis.
+    pub const BAYES_SPAM_MESSAGES_KEY: &str = "bayes_spam_messages";
+    /// Key for Bayes ham message counter in Redis.
+    pub const BAYES_HAM_MESSAGES_KEY: &str = "bayes_ham_messages";
+    /// Prefix for learned message tracking in Redis.
+    pub const BAYES_LEARNED_PREFIX: &str = "bayes:learned:";
+    /// Minimum spam messages required for classifier readiness.
+    pub const MIN_SPAM_MESSAGES: i64 = 200;
+    /// Minimum ham messages required for classifier readiness.
+    pub const MIN_HAM_MESSAGES: i64 = 200;
+    /// Expiration time for learned message tracking (24 hours in seconds).
+    pub const LEARNED_EXPIRY: u64 = 86400;
+}
+
 /// **Rspamd Symbol Names:** spam detection symbols used by Rspamd and the bot.
 pub mod symbol {
     /// Symbol for flooding behavior detected (`TG_FLOOD`).
@@ -160,6 +180,14 @@ pub mod symbol {
     // Fuzzy storage symbol
     /// Symbol for fuzzy storage detection (`FUZZY_DENIED`).
     pub const FUZZY_DENIED: &str = "FUZZY_DENIED";
+    
+    // Bayesian classifier symbols
+    /// Symbol for Bayesian spam detection (`BAYES_SPAM`).
+    pub const BAYES_SPAM: &str = "BAYES_SPAM";
+    /// Symbol for Bayesian ham detection (`BAYES_HAM`).
+    pub const BAYES_HAM: &str = "BAYES_HAM";
+    /// Symbol for Bayesian unsure classification (`BAYES_UNSURE`).
+    pub const BAYES_UNSURE: &str = "BAYES_UNSURE";
 }
 
 /// Features that are enabled for every chat by default.

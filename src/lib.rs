@@ -5,3 +5,4 @@ pub mod ban_manager;
 pub mod migration;
 pub mod trust_manager;
 pub mod fuzzy_trainer;
+pub mod bayes_manager;
