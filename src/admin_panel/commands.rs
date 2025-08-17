@@ -13,7 +13,7 @@ use teloxide::{
 use crate::admin_panel::{
     auth::{
         add_admin_user, get_admin_panel_chat_id, get_admin_panel_status, get_all_admin_users,
-        has_permission, is_admin_panel_admin, is_admin_panel_member, is_admin_panel_setup,
+        get_admin_user, has_permission, is_admin_panel_admin, is_admin_panel_member, is_admin_panel_setup,
         remove_admin_user, setup_admin_panel, update_admin_permissions,
     },
     config::{key, settings},
@@ -24,9 +24,14 @@ use crate::admin_panel::{
 #[derive(BotCommands, Clone)]
 #[command(rename_rule = "lowercase", description = "Admin Panel Commands:")]
 pub enum AdminPanelCommand {
+    // Core Setup Commands
     #[command(description = "Initialize admin panel in current chat")]
     SetupAdminPanel,
     
+    #[command(description = "Show admin panel status")]
+    PanelStatus,
+    
+    // User Management Commands
     #[command(description = "Add user to admin panel")]
     AddAdmin { username: String },
     
@@ -39,9 +44,13 @@ pub enum AdminPanelCommand {
     #[command(description = "Set user permissions")]
     SetPermissions { username: String, permissions: String },
     
-    #[command(description = "Show admin panel status")]
-    PanelStatus,
+    #[command(description = "Show user permissions")]
+    ShowPermissions { username: String },
     
+    #[command(description = "Show my permissions")]
+    MyPermissions,
+    
+    // Chat Management Commands
     #[command(description = "Show all monitored chats")]
     MonitoredChats,
     
@@ -51,26 +60,109 @@ pub enum AdminPanelCommand {
     #[command(description = "Remove chat from monitoring")]
     RemoveChat { chat_id: String },
     
+    #[command(description = "Show chat statistics")]
+    ChatStats,
+    
+    #[command(description = "Show chat statistics for specific chat")]
+    ChatStatsFor { chat_id: String },
+    
+    // Dashboard and Statistics Commands
     #[command(description = "Show real-time statistics dashboard")]
     Dashboard,
     
+    #[command(description = "Show system health")]
+    SystemHealth,
+    
+    #[command(description = "Show recent activity")]
+    RecentActivity,
+    
+    #[command(description = "Show recent activity for specific hours")]
+    RecentActivityHours { hours: u32 },
+    
+    #[command(description = "Show spam statistics")]
+    SpamStats,
+    
+    #[command(description = "Show spam statistics for specific days")]
+    SpamStatsDays { days: u32 },
+    
+    // Configuration Commands
     #[command(description = "Configure bot settings")]
     Configure { setting: String, value: String },
     
-    #[command(description = "Show audit log")]
-    AuditLog { hours: Option<u32> },
+    #[command(description = "Show current bot configuration")]
+    ShowConfig,
     
+    #[command(description = "Reset configuration to defaults")]
+    ResetConfig,
+    
+    #[command(description = "Export configuration")]
+    ExportConfig,
+    
+    // Audit and Logging Commands
+    #[command(description = "Show audit log")]
+    AuditLog,
+    
+    #[command(description = "Show audit log for specific hours")]
+    AuditLogHours { hours: u32 },
+    
+    #[command(description = "Clear audit log")]
+    ClearAuditLog,
+    
+    #[command(description = "Export audit log")]
+    ExportAuditLog,
+    
+    #[command(description = "Export audit log for specific hours")]
+    ExportAuditLogHours { hours: u32 },
+    
+    // Emergency Control Commands
     #[command(description = "Emergency stop all monitoring")]
     EmergencyStop,
     
     #[command(description = "Resume all monitoring")]
     ResumeMonitoring,
     
+    #[command(description = "Show emergency status")]
+    EmergencyStatus,
+    
+    // Maintenance Commands
+    #[command(description = "Enable maintenance mode")]
+    EnableMaintenance,
+    
+    #[command(description = "Disable maintenance mode")]
+    DisableMaintenance,
+    
+    #[command(description = "Show maintenance status")]
+    MaintenanceStatus,
+    
+    // Advanced Commands
+    #[command(description = "Show bot performance metrics")]
+    Performance,
+    
+    #[command(description = "Show memory usage")]
+    MemoryUsage,
+    
+    #[command(description = "Show Redis statistics")]
+    RedisStats,
+    
+    #[command(description = "Test bot connectivity")]
+    TestConnectivity,
+    
+    // Help and Information Commands
     #[command(description = "Show help for admin panel commands")]
     Help,
     
-    #[command(description = "Show current bot configuration")]
-    ShowConfig,
+    #[command(description = "Show command examples")]
+    Examples,
+    
+    #[command(description = "Show bot version and info")]
+    BotInfo,
+    
+    // Quick Action Commands (with inline keyboards)
+    #[command(description = "Quick admin panel menu")]
+    QuickMenu,
+    
+    #[command(description = "Show admin panel shortcuts")]
+    Shortcuts,
 }
 
 /// Handle admin panel commands
@@ -112,6 +204,15 @@ pub async fn handle_admin_panel_command(
             
             // Handle other commands
             match command {
+                // Core Setup Commands
+                AdminPanelCommand::SetupAdminPanel => {
+                    handle_setup_admin_panel(bot, msg, &mut redis_conn).await?;
+                }
+                AdminPanelCommand::PanelStatus => {
+                    handle_panel_status(bot, msg, &mut redis_conn).await?;
+                }
+                
+                // User Management Commands
                 AdminPanelCommand::AddAdmin { username } => {
                     handle_add_admin(bot, msg, &mut redis_conn, username).await?;
                 }
@@ -124,9 +225,14 @@ pub async fn handle_admin_panel_command(
                 AdminPanelCommand::SetPermissions { username, permissions } => {
                     handle_set_permissions(bot, msg, &mut redis_conn, username, permissions).await?;
                 }
-                AdminPanelCommand::PanelStatus => {
-                    handle_panel_status(bot, msg, &mut redis_conn).await?;
+                AdminPanelCommand::ShowPermissions { username } => {
+                    handle_show_permissions(bot, msg, &mut redis_conn, username).await?;
                 }
+                AdminPanelCommand::MyPermissions => {
+                    handle_my_permissions(bot, msg, &mut redis_conn).await?;
+                }
+                
+                // Chat Management Commands
                 AdminPanelCommand::MonitoredChats => {
                     handle_monitored_chats(bot, msg, &mut redis_conn).await?;
                 }
@@ -136,28 +242,118 @@ pub async fn handle_admin_panel_command(
                 AdminPanelCommand::RemoveChat { chat_id } => {
                     handle_remove_chat(bot, msg, &mut redis_conn, chat_id).await?;
                 }
+                AdminPanelCommand::ChatStats => {
+                    handle_chat_stats(bot, msg, &mut redis_conn, None).await?;
+                }
+                AdminPanelCommand::ChatStatsFor { chat_id } => {
+                    handle_chat_stats(bot, msg, &mut redis_conn, Some(chat_id)).await?;
+                }
+                
+                // Dashboard and Statistics Commands
                 AdminPanelCommand::Dashboard => {
                     handle_dashboard(bot, msg, &mut redis_conn).await?;
                 }
+                AdminPanelCommand::SystemHealth => {
+                    handle_system_health(bot, msg, &mut redis_conn).await?;
+                }
+                AdminPanelCommand::RecentActivity => {
+                    handle_recent_activity(bot, msg, &mut redis_conn, 24).await?;
+                }
+                AdminPanelCommand::RecentActivityHours { hours } => {
+                    handle_recent_activity(bot, msg, &mut redis_conn, hours).await?;
+                }
+                AdminPanelCommand::SpamStats => {
+                    handle_spam_stats(bot, msg, &mut redis_conn, 7).await?;
+                }
+                AdminPanelCommand::SpamStatsDays { days } => {
+                    handle_spam_stats(bot, msg, &mut redis_conn, days).await?;
+                }
+                
+                // Configuration Commands
                 AdminPanelCommand::Configure { setting, value } => {
                     handle_configure(bot, msg, &mut redis_conn, setting, value).await?;
                 }
-                AdminPanelCommand::AuditLog { hours } => {
+                AdminPanelCommand::ShowConfig => {
+                    handle_show_config(bot, msg, &mut redis_conn).await?;
+                }
+                AdminPanelCommand::ResetConfig => {
+                    handle_reset_config(bot, msg, &mut redis_conn).await?;
+                }
+                AdminPanelCommand::ExportConfig => {
+                    handle_export_config(bot, msg, &mut redis_conn).await?;
+                }
+                
+                // Audit and Logging Commands
+                AdminPanelCommand::AuditLog => {
+                    handle_audit_log(bot, msg, &mut redis_conn, 24).await?;
+                }
+                AdminPanelCommand::AuditLogHours { hours } => {
                     handle_audit_log(bot, msg, &mut redis_conn, hours).await?;
                 }
+                AdminPanelCommand::ClearAuditLog => {
+                    handle_clear_audit_log(bot, msg, &mut redis_conn).await?;
+                }
+                AdminPanelCommand::ExportAuditLog => {
+                    handle_export_audit_log(bot, msg, &mut redis_conn, 24).await?;
+                }
+                AdminPanelCommand::ExportAuditLogHours { hours } => {
+                    handle_export_audit_log(bot, msg, &mut redis_conn, hours).await?;
+                }
+                
+                // Emergency Control Commands
                 AdminPanelCommand::EmergencyStop => {
                     handle_emergency_stop(bot, msg, &mut redis_conn).await?;
                 }
                 AdminPanelCommand::ResumeMonitoring => {
                     handle_resume_monitoring(bot, msg, &mut redis_conn).await?;
                 }
+                AdminPanelCommand::EmergencyStatus => {
+                    handle_emergency_status(bot, msg, &mut redis_conn).await?;
+                }
+                
+                // Maintenance Commands
+                AdminPanelCommand::EnableMaintenance => {
+                    handle_enable_maintenance(bot, msg, &mut redis_conn).await?;
+                }
+                AdminPanelCommand::DisableMaintenance => {
+                    handle_disable_maintenance(bot, msg, &mut redis_conn).await?;
+                }
+                AdminPanelCommand::MaintenanceStatus => {
+                    handle_maintenance_status(bot, msg, &mut redis_conn).await?;
+                }
+                
+                // Advanced Commands
+                AdminPanelCommand::Performance => {
+                    handle_performance(bot, msg, &mut redis_conn).await?;
+                }
+                AdminPanelCommand::MemoryUsage => {
+                    handle_memory_usage(bot, msg, &mut redis_conn).await?;
+                }
+                AdminPanelCommand::RedisStats => {
+                    handle_redis_stats(bot, msg, &mut redis_conn).await?;
+                }
+                AdminPanelCommand::TestConnectivity => {
+                    handle_test_connectivity(bot, msg, &mut redis_conn).await?;
+                }
+                
+                // Help and Information Commands
                 AdminPanelCommand::Help => {
                     handle_help(bot, msg).await?;
                 }
-                AdminPanelCommand::ShowConfig => {
-                    handle_show_config(bot, msg, &mut redis_conn).await?;
+                AdminPanelCommand::Examples => {
+                    handle_examples(bot, msg).await?;
                 }
-                _ => {}
+                AdminPanelCommand::BotInfo => {
+                    handle_bot_info(bot, msg).await?;
+                }
+                
+                // Quick Action Commands
+                AdminPanelCommand::QuickMenu => {
+                    handle_quick_menu(bot, msg, &mut redis_conn).await?;
+                }
+                AdminPanelCommand::Shortcuts => {
+                    handle_shortcuts(bot, msg).await?;
+                }
             }
         }
     }
@@ -1397,4 +1593,116 @@ async fn get_active_filters_count(redis_conn: &mut redis::Connection) -> Result<
     // Count enabled features/filters
     let enabled_features: Vec<String> = redis_conn.smembers(crate::config::ENABLED_FEATURES_KEY).await?;
     Ok(enabled_features.len())
+}
+
+// New handler functions for enhanced admin panel commands
+
+/// Handle show permissions command
+async fn handle_show_permissions(
+    bot: Bot,
+    msg: Message,
+    redis_conn: &mut redis::Connection,
+    username: String,
+) -> Result<()> {
+    let chat = msg.chat.clone();
+    let user = msg.from().unwrap();
+    
+    // Check if user has permission to view user information
+    if !has_permission(redis_conn, user.id, &AdminPermission::ManageUsers).await? {
+        bot.send_message(
+            chat.id,
+            "❌ You don't have permission to view user permissions.",
+        )
+        .await?;
+        return Ok(());
+    }
+    
+    // Try to resolve username to user
+    let target_user = match resolve_username(&bot, &username).await? {
+        Some(user) => user,
+        None => {
+            bot.send_message(
+                chat.id,
+                format!("❌ Could not find user with username: {}", username),
+            )
+            .await?;
+            return Ok(());
+        }
+    };
+    
+    // Get admin user data
+    if let Some(admin_user) = get_admin_user(redis_conn, target_user.id).await? {
+        let permissions_str: Vec<String> = admin_user.permissions.iter().map(|p| p.to_string()).collect();
+        
+        bot.send_message(
+            chat.id,
+            format!(
+                "👤 **User Permissions**\n\n\
+                Name: {}\n\
+                Username: @{}\n\
+                ID: `{}`\n\n\
+                **Permissions:**\n{}",
+                admin_user.display_name,
+                admin_user.username.as_deref().unwrap_or("no_username"),
+                admin_user.user_id.0,
+                if permissions_str.is_empty() {
+                    "No permissions assigned".to_string()
+                } else {
+                    permissions_str.join("\n")
+                }
+            ),
+        )
+        .await?;
+    } else {
+        bot.send_message(
+            chat.id,
+            format!("❌ User {} is not a member of the admin panel.", username),
+        )
+        .await?;
+    }
+    
+    Ok(())
+}
+
+/// Handle my permissions command
+async fn handle_my_permissions(
+    bot: Bot,
+    msg: Message,
+    redis_conn: &mut redis::Connection,
+) -> Result<()> {
+    let chat = msg.chat.clone();
+    let user = msg.from().unwrap();
+    
+    // Get admin user data
+    if let Some(admin_user) = get_admin_user(redis_conn, user.id).await? {
+        let permissions_str: Vec<String> = admin_user.permissions.iter().map(|p| p.to_string()).collect();
+        
+        bot.send_message(
+            chat.id,
+            format!(
+                "👤 **Your Permissions**\n\n\
+                Name: {}\n\
+                Username: @{}\n\
+                ID: `{}`\n\n\
+                **Permissions:**\n{}",
+                admin_user.display_name,
+                admin_user.username.as_deref().unwrap_or("no_username"),
+                admin_user.user_id.0,
+                if permissions_str.is_empty() {
+                    "No permissions assigned".to_string()
+                } else {
+                    permissions_str.join("\n")
+                }
+            ),
+        )
+        .await?;
+    } else {
+        bot.send_message(
+            chat.id,
+            "❌ You are not a member of the admin panel.",
+        )
+        .await?;
+    }
+    
+    Ok(())
 }
