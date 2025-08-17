@@ -1,6 +1,7 @@
 use crate::admin_handlers::AdminCommand;
 use crate::config::{field, key, suffix, ENABLED_FEATURES_KEY, reply_aware, rate_limit};
 use crate::trust_manager::{TrustManager, TrustedMessageType, TrustedMessageMetadata};
+use crate::bayes_manager::BayesManager;
 use redis::{Commands, RedisResult};
 use std::collections::HashMap;
 use std::fmt::Write;
@@ -270,7 +271,13 @@ pub async fn handle_admin_command(bot: Bot, msg: Message, cmd: AdminCommand) -> 
                     /resetratelimit <user> – reset rate limiting for a user\n\
                     /spampatterns <user> – show spam pattern history for a user\n\
                     /selectivetrust <rule>|<true|false> – configure selective trusting rules\n\
-                    /antievasionstats – show anti-evasion statistics",
+                    /antievasionstats – show anti-evasion statistics\n\
+                    \n\
+                    Bayesian Learning Commands:\n\
+                    /learnspam <message_id> – learn a message as spam for Bayesian classifier\n\
+                    /learnham <message_id> – learn a message as ham for Bayesian classifier\n\
+                    /bayesstats – show Bayesian classifier statistics\n\
+                    /bayesreset – reset all Bayesian classifier data",
                 ).await?;
             }
             AdminCommand::ManageFeatures => {
@@ -875,11 +882,199 @@ pub async fn handle_admin_command(bot: Bot, msg: Message, cmd: AdminCommand) -> 
                 ).await?;
             }
 
+            AdminCommand::LearnSpam { message_id } => {
+                let bayes_manager = match BayesManager::new() {
+                    Ok(manager) => manager,
+                    Err(e) => {
+                        bot.send_message(
+                            chat_id,
+                            format!("❌ Failed to create Bayes manager: {}", e)
+                        ).await?;
+                        return Ok(());
+                    }
+                };
+                
+                // Get message content from Redis
+                let content = match get_message_content(&mut redis_conn, &message_id).await {
+                    Ok(content) => content,
+                    Err(e) => {
+                        bot.send_message(
+                            chat_id,
+                            format!("❌ Failed to get message content: {}", e)
+                        ).await?;
+                        return Ok(());
+                    }
+                };
+                
+                match bayes_manager.learn_spam(&message_id, &content).await {
+                    Ok(()) => {
+                        bot.send_message(
+                            chat_id,
+                            format!("✅ Message {} learned as spam", message_id)
+                        ).await?;
+                    }
+                    Err(e) => {
+                        bot.send_message(
+                            chat_id,
+                            format!("❌ Failed to learn as spam: {}", e)
+                        ).await?;
+                    }
+                }
+            }
+            
+            AdminCommand::LearnHam { message_id } => {
+                let bayes_manager = match BayesManager::new() {
+                    Ok(manager) => manager,
+                    Err(e) => {
+                        bot.send_message(
+                            chat_id,
+                            format!("❌ Failed to create Bayes manager: {}", e)
+                        ).await?;
+                        return Ok(());
+                    }
+                };
+                
+                let content = match get_message_content(&mut redis_conn, &message_id).await {
+                    Ok(content) => content,
+                    Err(e) => {
+                        bot.send_message(
+                            chat_id,
+                            format!("❌ Failed to get message content: {}", e)
+                        ).await?;
+                        return Ok(());
+                    }
+                };
+                
+                match bayes_manager.learn_ham(&message_id, &content).await {
+                    Ok(()) => {
+                        bot.send_message(
+                            chat_id,
+                            format!("✅ Message {} learned as ham", message_id)
+                        ).await?;
+                    }
+                    Err(e) => {
+                        bot.send_message(
+                            chat_id,
+                            format!("❌ Failed to learn as ham: {}", e)
+                        ).await?;
+                    }
+                }
+            }
+            
+            AdminCommand::BayesStats => {
+                let bayes_manager = match BayesManager::new() {
+                    Ok(manager) => manager,
+                    Err(e) => {
+                        bot.send_message(
+                            chat_id,
+                            format!("❌ Failed to create Bayes manager: {}", e)
+                        ).await?;
+                        return Ok(());
+                    }
+                };
+                
+                match bayes_manager.get_detailed_info() {
+                    Ok(info) => {
+                        let status = if info.get("is_ready").unwrap_or(&"false".to_string()) == "true" { 
+                            "✅ Ready" 
+                        } else { 
+                            "⏳ Training" 
+                        };
+                        
+                        let response = format!(
+                            "🤖 Bayes Classifier Status: {}\n\n\
+                             📊 Statistics:\n\
+                             • Spam tokens: {}\n\
+                             • Ham tokens: {}\n\
+                             • Spam messages: {}\n\
+                             • Ham messages: {}\n\
+                             • Total messages: {}\n\
+                             • Spam ratio: {}%\n\n\
+                             📈 Progress:\n\
+                             • Spam progress: {}%\n\
+                             • Ham progress: {}%\n\
+                             • Min required: {} spam, {} ham",
+                            status,
+                            info.get("spam_tokens").unwrap_or(&"0".to_string()),
+                            info.get("ham_tokens").unwrap_or(&"0".to_string()),
+                            info.get("spam_messages").unwrap_or(&"0".to_string()),
+                            info.get("ham_messages").unwrap_or(&"0".to_string()),
+                            info.get("total_messages").unwrap_or(&"0".to_string()),
+                            info.get("spam_ratio_percent").unwrap_or(&"0".to_string()),
+                            info.get("spam_progress_percent").unwrap_or(&"0".to_string()),
+                            info.get("ham_progress_percent").unwrap_or(&"0".to_string()),
+                            info.get("min_spam_required").unwrap_or(&"200".to_string()),
+                            info.get("min_ham_required").unwrap_or(&"200".to_string())
+                        );
+                        
+                        bot.send_message(chat_id, response).await?;
+                    }
+                    Err(e) => {
+                        bot.send_message(
+                            chat_id,
+                            format!("❌ Failed to get Bayes stats: {}", e)
+                        ).await?;
+                    }
+                }
+            }
+            
+            AdminCommand::BayesReset => {
+                let bayes_manager = match BayesManager::new() {
+                    Ok(manager) => manager,
+                    Err(e) => {
+                        bot.send_message(
+                            chat_id,
+                            format!("❌ Failed to create Bayes manager: {}", e)
+                        ).await?;
+                        return Ok(());
+                    }
+                };
+                
+                match bayes_manager.reset_all_data() {
+                    Ok(()) => {
+                        bot.send_message(
+                            chat_id,
+                            "🗑️ Bayes classifier data has been reset. The classifier will need to be retrained."
+                        ).await?;
+                    }
+                    Err(e) => {
+                        bot.send_message(
+                            chat_id,
+                            format!("❌ Failed to reset Bayes data: {}", e)
+                        ).await?;
+                    }
+                }
+            }
+
         }
     } else {
         bot.send_message(chat_id, "You are not admin").await?;
     }
     Ok(())
+}
+
+/// Retrieves message content from Redis storage.
+/// 
+/// # Arguments
+/// 
+/// * `redis_conn` - Mutable Redis connection
+/// * `message_id` - The message ID to retrieve content for
+/// 
+/// # Returns
+/// 
+/// A `Result<String>` containing the message content or an error
+async fn get_message_content(redis_conn: &mut redis::Connection, message_id: &str) -> Result<String> {
+    // Try to get message content from Redis
+    let key = format!("tg:message:{}", message_id);
+    let content: Option<String> = redis_conn.get(&key)?;
+    
+    if let Some(content) = content {
+        Ok(content)
+    } else {
+        // If not found in Redis, return a placeholder message
+        // In a real implementation, you might want to fetch from Telegram API
+        Ok(format!("Message content not found for ID: {}", message_id))
+    }
 }
 
 async fn restart_rspamd_async() -> Result<()> {

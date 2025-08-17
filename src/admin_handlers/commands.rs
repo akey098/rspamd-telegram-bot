@@ -35,4 +35,12 @@ pub enum AdminCommand {
     SelectiveTrust { args: String },
     #[command(description = "show anti-evasion statistics.")]
     AntiEvasionStats,
+    #[command(description = "learn a message as spam for Bayesian classifier.")]
+    LearnSpam { message_id: String },
+    #[command(description = "learn a message as ham for Bayesian classifier.")]
+    LearnHam { message_id: String },
+    #[command(description = "show Bayesian classifier statistics.")]
+    BayesStats,
+    #[command(description = "reset all Bayesian classifier data.")]
+    BayesReset,
 }
