@@ -83,6 +83,257 @@ impl AdminPermission {
             AdminPermission::FullAccess,
         ]
     }
+
+    /// Get permission description
+    pub fn description(&self) -> &'static str {
+        match self {
+            AdminPermission::ViewStats => "View statistics, dashboard, and system health",
+            AdminPermission::ManageChats => "Add/remove monitored chats and manage chat settings",
+            AdminPermission::ManageUsers => "Add/remove admin panel members and manage permissions",
+            AdminPermission::ConfigureBot => "Modify bot configuration and settings",
+            AdminPermission::ViewAuditLog => "View audit logs and activity history",
+            AdminPermission::ViewConfig => "View current bot configuration",
+            AdminPermission::EmergencyControl => "Emergency stop/resume monitoring",
+            AdminPermission::FullAccess => "Full access to all admin panel features",
+        }
+    }
+
+    /// Check if permission is dangerous (requires confirmation)
+    pub fn is_dangerous(&self) -> bool {
+        matches!(self, 
+            AdminPermission::EmergencyControl | 
+            AdminPermission::FullAccess |
+            AdminPermission::ManageUsers
+        )
+    }
+}
+
+/// **Permission Groups:** predefined permission sets for common roles.
+#[derive(Debug, Clone)]
+pub enum PermissionGroup {
+    /// Read-only access to statistics and audit logs
+    Viewer,
+    /// Can manage chats and view statistics
+    Moderator,
+    /// Can manage users and configure basic settings
+    Manager,
+    /// Full administrative access
+    Administrator,
+}
+
+impl PermissionGroup {
+    /// Get permissions for a permission group
+    pub fn permissions(&self) -> Vec<AdminPermission> {
+        match self {
+            PermissionGroup::Viewer => vec![
+                AdminPermission::ViewStats,
+                AdminPermission::ViewAuditLog,
+            ],
+            PermissionGroup::Moderator => vec![
+                AdminPermission::ViewStats,
+                AdminPermission::ManageChats,
+                AdminPermission::ViewAuditLog,
+            ],
+            PermissionGroup::Manager => vec![
+                AdminPermission::ViewStats,
+                AdminPermission::ManageChats,
+                AdminPermission::ManageUsers,
+                AdminPermission::ConfigureBot,
+                AdminPermission::ViewAuditLog,
+                AdminPermission::ViewConfig,
+            ],
+            PermissionGroup::Administrator => vec![
+                AdminPermission::FullAccess,
+            ],
+        }
+    }
+
+    /// Get display name for the permission group
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            PermissionGroup::Viewer => "Viewer",
+            PermissionGroup::Moderator => "Moderator",
+            PermissionGroup::Manager => "Manager",
+            PermissionGroup::Administrator => "Administrator",
+        }
+    }
+
+    /// Parse permission group from string
+    pub fn from_string(s: &str) -> Option<Self> {
+        match s.to_lowercase().as_str() {
+            "viewer" => Some(PermissionGroup::Viewer),
+            "moderator" => Some(PermissionGroup::Moderator),
+            "manager" => Some(PermissionGroup::Manager),
+            "administrator" | "admin" => Some(PermissionGroup::Administrator),
+            _ => None,
+        }
+    }
+
+    /// Get all available permission groups
+    pub fn all_groups() -> Vec<Self> {
+        vec![
+            PermissionGroup::Viewer,
+            PermissionGroup::Moderator,
+            PermissionGroup::Manager,
+            PermissionGroup::Administrator,
+        ]
+    }
+
+    /// Get description for the permission group
+    pub fn description(&self) -> &'static str {
+        match self {
+            PermissionGroup::Viewer => "Read-only access to view statistics and audit logs",
+            PermissionGroup::Moderator => "Can manage chats and view statistics",
+            PermissionGroup::Manager => "Can manage users and configure basic settings",
+            PermissionGroup::Administrator => "Full administrative access to all features",
+        }
+    }
+}
+
+/// **Permission Template:** predefined permission configurations
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PermissionTemplate {
+    pub name: String,
+    pub description: String,
+    pub permissions: Vec<AdminPermission>,
+    pub is_dangerous: bool,
+}
+
+impl PermissionTemplate {
+    /// Create a new permission template
+    pub fn new(name: String, description: String, permissions: Vec<AdminPermission>) -> Self {
+        let is_dangerous = permissions.iter().any(|p| p.is_dangerous());
+        Self {
+            name,
+            description,
+            permissions,
+            is_dangerous,
+        }
+    }
+
+    /// Get predefined templates
+    pub fn predefined_templates() -> Vec<Self> {
+        vec![
+            PermissionTemplate::new(
+                "Read Only".to_string(),
+                "View-only access to statistics and logs".to_string(),
+                vec![AdminPermission::ViewStats, AdminPermission::ViewAuditLog],
+            ),
+            PermissionTemplate::new(
+                "Chat Manager".to_string(),
+                "Manage chats and view statistics".to_string(),
+                vec![
+                    AdminPermission::ViewStats,
+                    AdminPermission::ManageChats,
+                    AdminPermission::ViewAuditLog,
+                ],
+            ),
+            PermissionTemplate::new(
+                "User Manager".to_string(),
+                "Manage users and basic configuration".to_string(),
+                vec![
+                    AdminPermission::ViewStats,
+                    AdminPermission::ManageUsers,
+                    AdminPermission::ConfigureBot,
+                    AdminPermission::ViewAuditLog,
+                ],
+            ),
+            PermissionTemplate::new(
+                "System Admin".to_string(),
+                "Full system administration access".to_string(),
+                vec![AdminPermission::FullAccess],
+            ),
+        ]
+    }
+}
+
+/// **Permission Validator:** utilities for validating permission configurations
+pub struct PermissionValidator;
+
+impl PermissionValidator {
+    /// Validate a set of permissions for conflicts
+    pub fn validate_permissions(permissions: &[AdminPermission]) -> Result<(), String> {
+        let mut permission_set = HashSet::new();
+        
+        for permission in permissions {
+            if permission_set.contains(permission) {
+                return Err(format!("Duplicate permission: {}", permission));
+            }
+            
+            // Check for FullAccess conflicts
+            if *permission == AdminPermission::FullAccess && permissions.len() > 1 {
+                return Err("FullAccess permission should be used alone".to_string());
+            }
+            
+            permission_set.insert(permission);
+        }
+        
+        Ok(())
+    }
+
+    /// Check if permissions are compatible
+    pub fn are_compatible(permissions: &[AdminPermission]) -> bool {
+        Self::validate_permissions(permissions).is_ok()
+    }
+
+    /// Get minimum required permissions for a feature
+    pub fn get_required_permissions(feature: &str) -> Vec<AdminPermission> {
+        match feature {
+            "dashboard" => vec![AdminPermission::ViewStats],
+            "chat_management" => vec![AdminPermission::ManageChats],
+            "user_management" => vec![AdminPermission::ManageUsers],
+            "configuration" => vec![AdminPermission::ConfigureBot],
+            "audit_log" => vec![AdminPermission::ViewAuditLog],
+            "emergency_control" => vec![AdminPermission::EmergencyControl],
+            _ => vec![],
+        }
+    }
+
+    /// Check if user has required permissions for a feature
+    pub fn has_feature_access(user_permissions: &[AdminPermission], feature: &str) -> bool {
+        let required = Self::get_required_permissions(feature);
+        required.is_empty() || required.iter().all(|p| user_permissions.contains(p))
+    }
+}
+
+/// **Permission Export/Import:** utilities for permission configuration management
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PermissionConfig {
+    pub user_id: UserId,
+    pub username: Option<String>,
+    pub display_name: String,
+    pub permissions: Vec<AdminPermission>,
+    pub added_by: UserId,
+    pub added_at: chrono::DateTime<chrono::Utc>,
+}
+
+impl PermissionConfig {
+    /// Export user permissions to configuration
+    pub fn from_admin_user(admin_user: &AdminUser) -> Self {
+        Self {
+            user_id: admin_user.user_id,
+            username: admin_user.username.clone(),
+            display_name: admin_user.display_name.clone(),
+            permissions: admin_user.permissions.iter().cloned().collect(),
+            added_by: admin_user.added_by,
+            added_at: admin_user.added_at,
+        }
+    }
+
+    /// Convert to admin user
+    pub fn to_admin_user(&self) -> AdminUser {
+        let mut admin_user = AdminUser::new(
+            self.user_id,
+            self.username.clone(),
+            self.display_name.clone(),
+            self.added_by,
+        );
+        admin_user.added_at = self.added_at;
+        for permission in &self.permissions {
+            admin_user.add_permission(permission.clone());
+        }
+        admin_user
+    }
 }
 
 /// **Admin User:** represents an admin panel member with permissions.
@@ -154,55 +405,34 @@ impl AdminUser {
     pub fn update_activity(&mut self) {
         self.last_activity = Some(chrono::Utc::now());
     }
-}
 
-/// **Permission Groups:** predefined permission sets for common roles.
-#[derive(Debug, Clone)]
-pub enum PermissionGroup {
-    /// Read-only access to statistics and audit logs
-    Viewer,
-    /// Can manage chats and view statistics
-    Moderator,
-    /// Can manage users and configure basic settings
-    Manager,
-    /// Full administrative access
-    Administrator,
-}
+    /// Get permissions as sorted vector
+    pub fn get_permissions_sorted(&self) -> Vec<AdminPermission> {
+        let mut permissions: Vec<_> = self.permissions.iter().cloned().collect();
+        permissions.sort_by(|a, b| a.to_string().cmp(&b.to_string()));
+        permissions
+    }
 
-impl PermissionGroup {
-    /// Get permissions for a permission group
-    pub fn permissions(&self) -> Vec<AdminPermission> {
-        match self {
-            PermissionGroup::Viewer => vec![
-                AdminPermission::ViewStats,
-                AdminPermission::ViewAuditLog,
-            ],
-            PermissionGroup::Moderator => vec![
-                AdminPermission::ViewStats,
-                AdminPermission::ManageChats,
-                AdminPermission::ViewAuditLog,
-            ],
-            PermissionGroup::Manager => vec![
-                AdminPermission::ViewStats,
-                AdminPermission::ManageChats,
-                AdminPermission::ManageUsers,
-                AdminPermission::ConfigureBot,
-                AdminPermission::ViewAuditLog,
-                AdminPermission::ViewConfig,
-            ],
-            PermissionGroup::Administrator => vec![
-                AdminPermission::FullAccess,
-            ],
+    /// Check if user has dangerous permissions
+    pub fn has_dangerous_permissions(&self) -> bool {
+        self.permissions.iter().any(|p| p.is_dangerous())
+    }
+
+    /// Get user's permission level (for display purposes)
+    pub fn get_permission_level(&self) -> String {
+        if self.has_permission(&AdminPermission::FullAccess) {
+            "Administrator".to_string()
+        } else if self.has_permission(&AdminPermission::ManageUsers) {
+            "Manager".to_string()
+        } else if self.has_permission(&AdminPermission::ManageChats) {
+            "Moderator".to_string()
+        } else {
+            "Viewer".to_string()
         }
     }
 
-    /// Get display name for the permission group
-    pub fn display_name(&self) -> &'static str {
-        match self {
-            PermissionGroup::Viewer => "Viewer",
-            PermissionGroup::Moderator => "Moderator",
-            PermissionGroup::Manager => "Manager",
-            PermissionGroup::Administrator => "Administrator",
-        }
+    /// Export permissions to configuration
+    pub fn export_config(&self) -> PermissionConfig {
+        PermissionConfig::from_admin_user(self)
     }
 }

@@ -1,7 +1,7 @@
 //! Admin Panel Commands
 
 use anyhow::Result;
-use redis::AsyncCommands;
+use redis::{AsyncCommands, Commands, TypedCommands};
 use serde::{Deserialize, Serialize};
 use teloxide::{
     prelude::*,
@@ -17,7 +17,7 @@ use crate::admin_panel::{
         remove_admin_user, setup_admin_panel, update_admin_permissions,
     },
     config::{key, settings},
-    permissions::{AdminPermission, AdminUser, PermissionGroup},
+    permissions::{AdminPermission, AdminUser, PermissionGroup, PermissionTemplate, PermissionConfig, PermissionValidator},
 };
 
 /// **Admin Panel Commands:** comprehensive admin panel management commands.
@@ -44,11 +44,29 @@ pub enum AdminPanelCommand {
     #[command(description = "Set user permissions")]
     SetPermissions { username: String, permissions: String },
     
+    #[command(description = "Set user permissions using template")]
+    SetPermissionsTemplate { username: String, template: String },
+    
     #[command(description = "Show user permissions")]
     ShowPermissions { username: String },
     
     #[command(description = "Show my permissions")]
     MyPermissions,
+    
+    #[command(description = "Show available permission templates")]
+    ShowTemplates,
+    
+    #[command(description = "Show available permission groups")]
+    ShowGroups,
+    
+    #[command(description = "Validate permission configuration")]
+    ValidatePermissions { permissions: String },
+    
+    #[command(description = "Export user permissions")]
+    ExportPermissions { username: String },
+    
+    #[command(description = "Import user permissions")]
+    ImportPermissions { username: String, config: String },
     
     // Chat Management Commands
     #[command(description = "Show all monitored chats")]
@@ -225,11 +243,29 @@ pub async fn handle_admin_panel_command(
                 AdminPanelCommand::SetPermissions { username, permissions } => {
                     handle_set_permissions(bot, msg, &mut redis_conn, username, permissions).await?;
                 }
+                AdminPanelCommand::SetPermissionsTemplate { username, template } => {
+                    handle_set_permissions_template(bot, msg, &mut redis_conn, username, template).await?;
+                }
                 AdminPanelCommand::ShowPermissions { username } => {
                     handle_show_permissions(bot, msg, &mut redis_conn, username).await?;
                 }
                 AdminPanelCommand::MyPermissions => {
                     handle_my_permissions(bot, msg, &mut redis_conn).await?;
+                }
+                AdminPanelCommand::ShowTemplates => {
+                    handle_show_templates(bot, msg, &mut redis_conn).await?;
+                }
+                AdminPanelCommand::ShowGroups => {
+                    handle_show_groups(bot, msg, &mut redis_conn).await?;
+                }
+                AdminPanelCommand::ValidatePermissions { permissions } => {
+                    handle_validate_permissions(bot, msg, &mut redis_conn, permissions).await?;
+                }
+                AdminPanelCommand::ExportPermissions { username } => {
+                    handle_export_permissions(bot, msg, &mut redis_conn, username).await?;
+                }
+                AdminPanelCommand::ImportPermissions { username, config } => {
+                    handle_import_permissions(bot, msg, &mut redis_conn, username, config).await?;
                 }
                 
                 // Chat Management Commands
@@ -1486,6 +1522,518 @@ async fn handle_show_config(
     Ok(())
 }
 
+/// Handle reset config command
+async fn handle_reset_config(
+    bot: Bot,
+    msg: Message,
+    redis_conn: &mut redis::Connection,
+) -> Result<()> {
+    let chat = msg.chat.clone();
+    let user = msg.from().unwrap();
+    
+    // Check if user has permission to configure bot
+    if !has_permission(redis_conn, user.id, &AdminPermission::ConfigureBot).await? {
+        bot.send_message(
+            chat.id,
+            "❌ You don't have permission to reset bot configuration.",
+        )
+        .await?;
+        return Ok(());
+    }
+    
+    // Reset all settings to defaults
+    let default_config = crate::admin_panel::config::DEFAULT_SETTINGS.clone();
+    for (key, value) in default_config {
+        redis_conn.hset(key::ADMIN_PANEL_SETTINGS_KEY, key, value).await?;
+    }
+    
+    // Log the reset action
+    add_audit_log_entry(
+        redis_conn,
+        user.id,
+        user.full_name(),
+        "Reset Configuration".to_string(),
+        Some("All bot configuration reset to defaults".to_string()),
+    ).await?;
+    
+    bot.send_message(
+        chat.id,
+        "✅ **Configuration Reset**\n\nAll bot settings have been reset to their default values.",
+    )
+    .await?;
+    
+    Ok(())
+}
+
+/// Handle export config command
+async fn handle_export_config(
+    bot: Bot,
+    msg: Message,
+    redis_conn: &mut redis::Connection,
+) -> Result<()> {
+    let chat = msg.chat.clone();
+    let user = msg.from().unwrap();
+    
+    // Check if user has permission to view config
+    if !has_permission(redis_conn, user.id, &AdminPermission::ViewConfig).await? {
+        bot.send_message(
+            chat.id,
+            "❌ You don't have permission to export bot configuration.",
+        )
+        .await?;
+        return Ok(());
+    }
+    
+    let config = get_all_config(redis_conn).await?;
+    let config_json = serde_json::to_string_pretty(&config)?;
+    
+    bot.send_message(
+        chat.id,
+        format!(
+            "📤 **Exported Bot Configuration**\n\n\
+            Use `/importconfig <config>` to import this configuration.",
+        ),
+    )
+    .await?;
+    
+    // Send the JSON configuration as a separate message
+    bot.send_message(
+        chat.id,
+        format!("```json\n{}\n```", config_json),
+    )
+    .await?;
+    
+    Ok(())
+}
+
+/// Handle show templates command
+async fn handle_show_templates(
+    bot: Bot,
+    msg: Message,
+    redis_conn: &mut redis::Connection,
+) -> Result<()> {
+    let chat = msg.chat.clone();
+    let user = msg.from().unwrap();
+    
+    // Check if user has permission to view user information
+    if !has_permission(redis_conn, user.id, &AdminPermission::ManageUsers).await? {
+        bot.send_message(
+            chat.id,
+            "❌ You don't have permission to view permission templates.",
+        )
+        .await?;
+        return Ok(());
+    }
+    
+    let templates = PermissionTemplate::predefined_templates();
+    let mut message = "📋 **Available Permission Templates**\n\n".to_string();
+    
+    for template in templates {
+        let permissions_str: Vec<String> = template.permissions.iter().map(|p| p.to_string()).collect();
+        let danger_icon = if template.is_dangerous { "⚠️ " } else { "" };
+        
+        message.push_str(&format!(
+            "**{}**{}\n{}\n\n**Permissions:**\n{}\n\n",
+            template.name,
+            danger_icon,
+            template.description,
+            permissions_str.join(", ")
+        ));
+    }
+    
+    message.push_str("Use `/setpermissionstemplate <username> <template_name>` to apply a template.");
+    
+    bot.send_message(chat.id, message).await?;
+    
+    Ok(())
+}
+
+/// Handle show groups command
+async fn handle_show_groups(
+    bot: Bot,
+    msg: Message,
+    redis_conn: &mut redis::Connection,
+) -> Result<()> {
+    let chat = msg.chat.clone();
+    let user = msg.from().unwrap();
+    
+    // Check if user has permission to view user information
+    if !has_permission(redis_conn, user.id, &AdminPermission::ManageUsers).await? {
+        bot.send_message(
+            chat.id,
+            "❌ You don't have permission to view permission groups.",
+        )
+        .await?;
+        return Ok(());
+    }
+    
+    let groups = PermissionGroup::all_groups();
+    let mut message = "👥 **Available Permission Groups**\n\n".to_string();
+    
+    for group in groups {
+        let permissions_str: Vec<String> = group.permissions().iter().map(|p| p.to_string()).collect();
+        
+        message.push_str(&format!(
+            "**{}**\n{}\n\n**Permissions:**\n{}\n\n",
+            group.display_name(),
+            group.description(),
+            permissions_str.join(", ")
+        ));
+    }
+    
+    message.push_str("Use `/addadmin <username> <group>` to add a user with a specific group.");
+    
+    bot.send_message(chat.id, message).await?;
+    
+    Ok(())
+}
+
+/// Handle validate permissions command
+async fn handle_validate_permissions(
+    bot: Bot,
+    msg: Message,
+    redis_conn: &mut redis::Connection,
+    permissions: String,
+) -> Result<()> {
+    let chat = msg.chat.clone();
+    let user = msg.from().unwrap();
+    
+    // Check if user has permission to manage users
+    if !has_permission(redis_conn, user.id, &AdminPermission::ManageUsers).await? {
+        bot.send_message(
+            chat.id,
+            "❌ You don't have permission to validate permissions.",
+        )
+        .await?;
+        return Ok(());
+    }
+    
+    // Parse permissions
+    let permission_list: Vec<AdminPermission> = permissions
+        .split(',')
+        .map(|s| s.trim())
+        .filter_map(|s| AdminPermission::from_string(s))
+        .collect();
+    
+    if permission_list.is_empty() {
+        bot.send_message(
+            chat.id,
+            "❌ No valid permissions found in the input.",
+        )
+        .await?;
+        return Ok(());
+    }
+    
+    // Validate permissions
+    match PermissionValidator::validate_permissions(&permission_list) {
+        Ok(()) => {
+            let permissions_str: Vec<String> = permission_list.iter().map(|p| p.to_string()).collect();
+            let dangerous_permissions: Vec<String> = permission_list
+                .iter()
+                .filter(|p| p.is_dangerous())
+                .map(|p| p.to_string())
+                .collect();
+            
+            let mut message = format!(
+                "✅ **Permission Validation Successful**\n\n\
+                **Permissions:**\n{}\n\n",
+                permissions_str.join(", ")
+            );
+            
+            if !dangerous_permissions.is_empty() {
+                message.push_str(&format!(
+                    "⚠️ **Dangerous Permissions:**\n{}\n\n",
+                    dangerous_permissions.join(", ")
+                ));
+            }
+            
+            message.push_str("These permissions are valid and compatible.");
+            
+            bot.send_message(chat.id, message).await?;
+        }
+        Err(e) => {
+            bot.send_message(
+                chat.id,
+                format!("❌ **Permission Validation Failed**\n\nError: {}", e),
+            )
+            .await?;
+        }
+    }
+    
+    Ok(())
+}
+
+/// Handle export permissions command
+async fn handle_export_permissions(
+    bot: Bot,
+    msg: Message,
+    redis_conn: &mut redis::Connection,
+    username: String,
+) -> Result<()> {
+    let chat = msg.chat.clone();
+    let user = msg.from().unwrap();
+    
+    // Check if user has permission to manage users
+    if !has_permission(redis_conn, user.id, &AdminPermission::ManageUsers).await? {
+        bot.send_message(
+            chat.id,
+            "❌ You don't have permission to export permissions.",
+        )
+        .await?;
+        return Ok(());
+    }
+    
+    // Try to resolve username to user
+    let target_user = match resolve_username(&bot, &username).await? {
+        Some(user) => user,
+        None => {
+            bot.send_message(
+                chat.id,
+                format!("❌ Could not find user with username: {}", username),
+            )
+            .await?;
+            return Ok(());
+        }
+    };
+    
+    // Get admin user data
+    if let Some(admin_user) = get_admin_user(redis_conn, target_user.id).await? {
+        let config = admin_user.export_config();
+        let config_json = serde_json::to_string_pretty(&config)?;
+        
+        bot.send_message(
+            chat.id,
+            format!(
+                "📤 **Exported Permissions for {}**\n\n\
+                Use `/importpermissions <username> <config>` to import this configuration.",
+                target_user.full_name()
+            ),
+        )
+        .await?;
+        
+        // Send the JSON configuration as a separate message
+        bot.send_message(
+            chat.id,
+            format!("```json\n{}\n```", config_json),
+        )
+        .await?;
+    } else {
+        bot.send_message(
+            chat.id,
+            format!("❌ User {} is not a member of the admin panel.", username),
+        )
+        .await?;
+    }
+    
+    Ok(())
+}
+
+/// Handle import permissions command
+async fn handle_import_permissions(
+    bot: Bot,
+    msg: Message,
+    redis_conn: &mut redis::Connection,
+    username: String,
+    config: String,
+) -> Result<()> {
+    let chat = msg.chat.clone();
+    let user = msg.from().unwrap();
+    
+    // Check if user has permission to manage users
+    if !has_permission(redis_conn, user.id, &AdminPermission::ManageUsers).await? {
+        bot.send_message(
+            chat.id,
+            "❌ You don't have permission to import permissions.",
+        )
+        .await?;
+        return Ok(());
+    }
+    
+    // Try to resolve username to user
+    let target_user = match resolve_username(&bot, &username).await? {
+        Some(user) => user,
+        None => {
+            bot.send_message(
+                chat.id,
+                format!("❌ Could not find user with username: {}", username),
+            )
+            .await?;
+            return Ok(());
+        }
+    };
+    
+    // Parse configuration
+    let permission_config: PermissionConfig = match serde_json::from_str(&config) {
+        Ok(config) => config,
+        Err(e) => {
+            bot.send_message(
+                chat.id,
+                format!("❌ Failed to parse permission configuration: {}", e),
+            )
+            .await?;
+            return Ok(());
+        }
+    };
+    
+    // Validate permissions
+    if let Err(e) = PermissionValidator::validate_permissions(&permission_config.permissions) {
+        bot.send_message(
+            chat.id,
+            format!("❌ Invalid permission configuration: {}", e),
+        )
+        .await?;
+        return Ok(());
+    }
+    
+    // Update permissions
+    match update_admin_permissions(redis_conn, target_user.id, permission_config.permissions.clone()).await {
+        Ok(()) => {
+            let permissions_str: Vec<String> = permission_config.permissions.iter().map(|p| p.to_string()).collect();
+            
+            // Log the action
+            add_audit_log_entry(
+                redis_conn,
+                user.id,
+                user.full_name(),
+                "Import Permissions".to_string(),
+                Some(format!("Imported permissions for {} (@{}): {}", 
+                    target_user.full_name(), 
+                    target_user.username.as_deref().unwrap_or("no_username"),
+                    permissions_str.join(", "))),
+            ).await?;
+            
+            bot.send_message(
+                chat.id,
+                format!(
+                    "✅ Successfully imported permissions for {}:\n{}",
+                    target_user.full_name(),
+                    permissions_str.join(", ")
+                ),
+            )
+            .await?;
+        }
+        Err(e) => {
+            bot.send_message(
+                chat.id,
+                format!("❌ Failed to import permissions: {}", e),
+            )
+            .await?;
+        }
+    }
+    
+    Ok(())
+}
+
+/// Handle show permissions command
+async fn handle_show_permissions(
+    bot: Bot,
+    msg: Message,
+    redis_conn: &mut redis::Connection,
+    username: String,
+) -> Result<()> {
+    let chat = msg.chat.clone();
+    let user = msg.from().unwrap();
+    
+    // Check if user has permission to view user information
+    if !has_permission(redis_conn, user.id, &AdminPermission::ManageUsers).await? {
+        bot.send_message(
+            chat.id,
+            "❌ You don't have permission to view user permissions.",
+        )
+        .await?;
+        return Ok(());
+    }
+    
+    // Try to resolve username to user
+    let target_user = match resolve_username(&bot, &username).await? {
+        Some(user) => user,
+        None => {
+            bot.send_message(
+                chat.id,
+                format!("❌ Could not find user with username: {}", username),
+            )
+            .await?;
+            return Ok(());
+        }
+    };
+    
+    // Get admin user data
+    if let Some(admin_user) = get_admin_user(redis_conn, target_user.id).await? {
+        let permissions_str: Vec<String> = admin_user.permissions.iter().map(|p| p.to_string()).collect();
+        
+        bot.send_message(
+            chat.id,
+            format!(
+                "👤 **User Permissions**\n\n\
+                Name: {}\n\
+                Username: @{}\n\
+                ID: `{}`\n\n\
+                **Permissions:**\n{}",
+                admin_user.display_name,
+                admin_user.username.as_deref().unwrap_or("no_username"),
+                admin_user.user_id.0,
+                if permissions_str.is_empty() {
+                    "No permissions assigned".to_string()
+                } else {
+                    permissions_str.join("\n")
+                }
+            ),
+        )
+        .await?;
+    } else {
+        bot.send_message(
+            chat.id,
+            format!("❌ User {} is not a member of the admin panel.", username),
+        )
+        .await?;
+    }
+    
+    Ok(())
+}
+
+/// Handle my permissions command
+async fn handle_my_permissions(
+    bot: Bot,
+    msg: Message,
+    redis_conn: &mut redis::Connection,
+) -> Result<()> {
+    let chat = msg.chat.clone();
+    let user = msg.from().unwrap();
+    
+    // Get admin user data
+    if let Some(admin_user) = get_admin_user(redis_conn, user.id).await? {
+        let permissions_str: Vec<String> = admin_user.permissions.iter().map(|p| p.to_string()).collect();
+        
+        bot.send_message(
+            chat.id,
+            format!(
+                "👤 **Your Permissions**\n\n\
+                Name: {}\n\
+                Username: @{}\n\
+                ID: `{}`\n\n\
+                **Permissions:**\n{}",
+                admin_user.display_name,
+                admin_user.username.as_deref().unwrap_or("no_username"),
+                admin_user.user_id.0,
+                if permissions_str.is_empty() {
+                    "No permissions assigned".to_string()
+                } else {
+                    permissions_str.join("\n")
+                }
+            ),
+        )
+        .await?;
+    } else {
+        bot.send_message(
+            chat.id,
+            "❌ You are not a member of the admin panel.",
+        )
+        .await?;
+    }
+    
+    Ok(())
+}
+
 /// Helper function to resolve username to user
 async fn resolve_username(bot: &Bot, username: &str) -> Result<Option<User>> {
     // Remove @ if present
@@ -1595,14 +2143,114 @@ async fn get_active_filters_count(redis_conn: &mut redis::Connection) -> Result<
     Ok(enabled_features.len())
 }
 
-// New handler functions for enhanced admin panel commands
+// Enhanced permission system handler functions
 
-/// Handle show permissions command
-async fn handle_show_permissions(
+/// Handle set permissions template command
+async fn handle_set_permissions_template(
     bot: Bot,
     msg: Message,
     redis_conn: &mut redis::Connection,
     username: String,
+    template: String,
+) -> Result<()> {
+    let chat = msg.chat.clone();
+    let user = msg.from().unwrap();
+    
+    // Check if user has permission to manage users
+    if !has_permission(redis_conn, user.id, &AdminPermission::ManageUsers).await? {
+        bot.send_message(
+            chat.id,
+            "❌ You don't have permission to manage admin panel users.",
+        )
+        .await?;
+        return Ok(());
+    }
+    
+    // Try to resolve username to user
+    let target_user = match resolve_username(&bot, &username).await? {
+        Some(user) => user,
+        None => {
+            bot.send_message(
+                chat.id,
+                format!("❌ Could not find user with username: {}", username),
+            )
+            .await?;
+            return Ok(());
+        }
+    };
+    
+    // Find template
+    let template = match PermissionTemplate::predefined_templates()
+        .into_iter()
+        .find(|t| t.name.to_lowercase() == template.to_lowercase())
+    {
+        Some(t) => t,
+        None => {
+            let available_templates: Vec<String> = PermissionTemplate::predefined_templates()
+                .iter()
+                .map(|t| t.name.clone())
+                .collect();
+            
+            bot.send_message(
+                chat.id,
+                format!(
+                    "❌ Template '{}' not found.\n\nAvailable templates:\n{}",
+                    template,
+                    available_templates.join("\n")
+                ),
+            )
+            .await?;
+            return Ok(());
+        }
+    };
+    
+    // Update permissions using template
+    match update_admin_permissions(redis_conn, target_user.id, template.permissions.clone()).await {
+        Ok(()) => {
+            let permissions_str: Vec<String> = template.permissions.iter().map(|p| p.to_string()).collect();
+            
+            // Log the action
+            add_audit_log_entry(
+                redis_conn,
+                user.id,
+                user.full_name(),
+                "Update Permissions Template".to_string(),
+                Some(format!("Updated permissions for {} (@{}) using template '{}': {}", 
+                    target_user.full_name(), 
+                    target_user.username.as_deref().unwrap_or("no_username"),
+                    template.name,
+                    permissions_str.join(", "))),
+            ).await?;
+            
+            bot.send_message(
+                chat.id,
+                format!(
+                    "✅ Updated permissions for {} using template '{}':\n\n{}\n\n{}",
+                    target_user.full_name(),
+                    template.name,
+                    permissions_str.join(", "),
+                    template.description
+                ),
+            )
+            .await?;
+        }
+        Err(e) => {
+            bot.send_message(
+                chat.id,
+                format!("❌ Failed to update permissions: {}", e),
+            )
+            .await?;
+        }
+    }
+    
+    Ok(())
+}
+
+/// Handle show templates command
+async fn handle_show_templates(
+    bot: Bot,
+    msg: Message,
+    redis_conn: &mut redis::Connection,
 ) -> Result<()> {
     let chat = msg.chat.clone();
     let user = msg.from().unwrap();
@@ -1611,7 +2259,165 @@ async fn handle_show_permissions(
     if !has_permission(redis_conn, user.id, &AdminPermission::ManageUsers).await? {
         bot.send_message(
             chat.id,
-            "❌ You don't have permission to view user permissions.",
+            "❌ You don't have permission to view permission templates.",
+        )
+        .await?;
+        return Ok(());
+    }
+    
+    let templates = PermissionTemplate::predefined_templates();
+    let mut message = "📋 **Available Permission Templates**\n\n".to_string();
+    
+    for template in templates {
+        let permissions_str: Vec<String> = template.permissions.iter().map(|p| p.to_string()).collect();
+        let danger_icon = if template.is_dangerous { "⚠️ " } else { "" };
+        
+        message.push_str(&format!(
+            "**{}**{}\n{}\n\n**Permissions:**\n{}\n\n",
+            template.name,
+            danger_icon,
+            template.description,
+            permissions_str.join(", ")
+        ));
+    }
+    
+    message.push_str("Use `/setpermissionstemplate <username> <template_name>` to apply a template.");
+    
+    bot.send_message(chat.id, message).await?;
+    
+    Ok(())
+}
+
+/// Handle show groups command
+async fn handle_show_groups(
+    bot: Bot,
+    msg: Message,
+    redis_conn: &mut redis::Connection,
+) -> Result<()> {
+    let chat = msg.chat.clone();
+    let user = msg.from().unwrap();
+    
+    // Check if user has permission to view user information
+    if !has_permission(redis_conn, user.id, &AdminPermission::ManageUsers).await? {
+        bot.send_message(
+            chat.id,
+            "❌ You don't have permission to view permission groups.",
+        )
+        .await?;
+        return Ok(());
+    }
+    
+    let groups = PermissionGroup::all_groups();
+    let mut message = "👥 **Available Permission Groups**\n\n".to_string();
+    
+    for group in groups {
+        let permissions_str: Vec<String> = group.permissions().iter().map(|p| p.to_string()).collect();
+        
+        message.push_str(&format!(
+            "**{}**\n{}\n\n**Permissions:**\n{}\n\n",
+            group.display_name(),
+            group.description(),
+            permissions_str.join(", ")
+        ));
+    }
+    
+    message.push_str("Use `/addadmin <username> <group>` to add a user with a specific group.");
+    
+    bot.send_message(chat.id, message).await?;
+    
+    Ok(())
+}
+
+/// Handle validate permissions command
+async fn handle_validate_permissions(
+    bot: Bot,
+    msg: Message,
+    redis_conn: &mut redis::Connection,
+    permissions: String,
+) -> Result<()> {
+    let chat = msg.chat.clone();
+    let user = msg.from().unwrap();
+    
+    // Check if user has permission to manage users
+    if !has_permission(redis_conn, user.id, &AdminPermission::ManageUsers).await? {
+        bot.send_message(
+            chat.id,
+            "❌ You don't have permission to validate permissions.",
+        )
+        .await?;
+        return Ok(());
+    }
+    
+    // Parse permissions
+    let permission_list: Vec<AdminPermission> = permissions
+        .split(',')
+        .map(|s| s.trim())
+        .filter_map(|s| AdminPermission::from_string(s))
+        .collect();
+    
+    if permission_list.is_empty() {
+        bot.send_message(
+            chat.id,
+            "❌ No valid permissions found in the input.",
+        )
+        .await?;
+        return Ok(());
+    }
+    
+    // Validate permissions
+    match PermissionValidator::validate_permissions(&permission_list) {
+        Ok(()) => {
+            let permissions_str: Vec<String> = permission_list.iter().map(|p| p.to_string()).collect();
+            let dangerous_permissions: Vec<String> = permission_list
+                .iter()
+                .filter(|p| p.is_dangerous())
+                .map(|p| p.to_string())
+                .collect();
+            
+            let mut message = format!(
+                "✅ **Permission Validation Successful**\n\n\
+                **Permissions:**\n{}\n\n",
+                permissions_str.join(", ")
+            );
+            
+            if !dangerous_permissions.is_empty() {
+                message.push_str(&format!(
+                    "⚠️ **Dangerous Permissions:**\n{}\n\n",
+                    dangerous_permissions.join(", ")
+                ));
+            }
+            
+            message.push_str("These permissions are valid and compatible.");
+            
+            bot.send_message(chat.id, message).await?;
+        }
+        Err(e) => {
+            bot.send_message(
+                chat.id,
+                format!("❌ **Permission Validation Failed**\n\nError: {}", e),
+            )
+            .await?;
+        }
+    }
+    
+    Ok(())
+}
+
+/// Handle export permissions command
+async fn handle_export_permissions(
+    bot: Bot,
+    msg: Message,
+    redis_conn: &mut redis::Connection,
+    username: String,
+) -> Result<()> {
+    let chat = msg.chat.clone();
+    let user = msg.from().unwrap();
+    
+    // Check if user has permission to manage users
+    if !has_permission(redis_conn, user.id, &AdminPermission::ManageUsers).await? {
+        bot.send_message(
+            chat.id,
+            "❌ You don't have permission to export permissions.",
         )
         .await?;
         return Ok(());
@@ -1632,25 +2438,23 @@ async fn handle_show_permissions(
     
     // Get admin user data
     if let Some(admin_user) = get_admin_user(redis_conn, target_user.id).await? {
-        let permissions_str: Vec<String> = admin_user.permissions.iter().map(|p| p.to_string()).collect();
+        let config = admin_user.export_config();
+        let config_json = serde_json::to_string_pretty(&config)?;
         
         bot.send_message(
             chat.id,
             format!(
-                "👤 **User Permissions**\n\n\
-                Name: {}\n\
-                Username: @{}\n\
-                ID: `{}`\n\n\
-                **Permissions:**\n{}",
-                admin_user.display_name,
-                admin_user.username.as_deref().unwrap_or("no_username"),
-                admin_user.user_id.0,
-                if permissions_str.is_empty() {
-                    "No permissions assigned".to_string()
-                } else {
-                    permissions_str.join("\n")
-                }
+                "📤 **Exported Permissions for {}**\n\n\
+                Use `/importpermissions <username> <config>` to import this configuration.",
+                target_user.full_name()
             ),
+        )
+        .await?;
+        
+        // Send the JSON configuration as a separate message
+        bot.send_message(
+            chat.id,
+            format!("```json\n{}\n```", config_json),
         )
         .await?;
     } else {
@@ -1664,44 +2468,97 @@ async fn handle_show_permissions(
     Ok(())
 }
 
-/// Handle my permissions command
-async fn handle_my_permissions(
+/// Handle import permissions command
+async fn handle_import_permissions(
     bot: Bot,
     msg: Message,
     redis_conn: &mut redis::Connection,
+    username: String,
+    config: String,
 ) -> Result<()> {
     let chat = msg.chat.clone();
     let user = msg.from().unwrap();
     
-    // Get admin user data
-    if let Some(admin_user) = get_admin_user(redis_conn, user.id).await? {
-        let permissions_str: Vec<String> = admin_user.permissions.iter().map(|p| p.to_string()).collect();
-        
+    // Check if user has permission to manage users
+    if !has_permission(redis_conn, user.id, &AdminPermission::ManageUsers).await? {
         bot.send_message(
             chat.id,
-            format!(
-                "👤 **Your Permissions**\n\n\
-                Name: {}\n\
-                Username: @{}\n\
-                ID: `{}`\n\n\
-                **Permissions:**\n{}",
-                admin_user.display_name,
-                admin_user.username.as_deref().unwrap_or("no_username"),
-                admin_user.user_id.0,
-                if permissions_str.is_empty() {
-                    "No permissions assigned".to_string()
-                } else {
-                    permissions_str.join("\n")
-                }
-            ),
+            "❌ You don't have permission to import permissions.",
         )
         .await?;
-    } else {
+        return Ok(());
+    }
+    
+    // Try to resolve username to user
+    let target_user = match resolve_username(&bot, &username).await? {
+        Some(user) => user,
+        None => {
+            bot.send_message(
+                chat.id,
+                format!("❌ Could not find user with username: {}", username),
+            )
+            .await?;
+            return Ok(());
+        }
+    };
+    
+    // Parse configuration
+    let permission_config: PermissionConfig = match serde_json::from_str(&config) {
+        Ok(config) => config,
+        Err(e) => {
+            bot.send_message(
+                chat.id,
+                format!("❌ Failed to parse permission configuration: {}", e),
+            )
+            .await?;
+            return Ok(());
+        }
+    };
+    
+    // Validate permissions
+    if let Err(e) = PermissionValidator::validate_permissions(&permission_config.permissions) {
         bot.send_message(
             chat.id,
-            "❌ You are not a member of the admin panel.",
+            format!("❌ Invalid permission configuration: {}", e),
         )
         .await?;
+        return Ok(());
+    }
+    
+    // Update permissions
+    match update_admin_permissions(redis_conn, target_user.id, permission_config.permissions.clone()).await {
+        Ok(()) => {
+            let permissions_str: Vec<String> = permission_config.permissions.iter().map(|p| p.to_string()).collect();
+            
+            // Log the action
+            add_audit_log_entry(
+                redis_conn,
+                user.id,
+                user.full_name(),
+                "Import Permissions".to_string(),
+                Some(format!("Imported permissions for {} (@{}): {}", 
+                    target_user.full_name(), 
+                    target_user.username.as_deref().unwrap_or("no_username"),
+                    permissions_str.join(", "))),
+            ).await?;
+            
+            bot.send_message(
+                chat.id,
+                format!(
+                    "✅ Successfully imported permissions for {}:\n{}",
+                    target_user.full_name(),
+                    permissions_str.join(", ")
+                ),
+            )
+            .await?;
+        }
+        Err(e) => {
+            bot.send_message(
+                chat.id,
+                format!("❌ Failed to import permissions: {}", e),
+            )
+            .await?;
+        }
     }
     
     Ok(())
