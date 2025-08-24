@@ -2,7 +2,41 @@ use redis::Commands;
 use reqwest::Client;
 use std::collections::HashMap;
 use anyhow::Result;
-use crate::config::{rspamd, bayes};
+use crate::config::{rspamd, bayes, neural};
+use crate::neural_manager::NeuralManager;
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+
+/// Text features extracted for neural network training.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TextFeatures {
+    pub word_count: usize,
+    pub link_count: usize,
+    pub emoji_count: usize,
+    pub caps_ratio: f64,
+}
+
+/// Combined statistics for both Bayesian and Neural Network classifiers.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CombinedStats {
+    pub bayes: HashMap<String, i64>,
+    pub neural: crate::neural_manager::NeuralStats,
+}
+
+/// Readiness status for both classifiers.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ClassifierReadiness {
+    pub bayes_ready: bool,
+    pub neural_ready: bool,
+    pub both_ready: bool,
+}
+
+/// Detailed information about both classifiers.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DetailedClassifierInfo {
+    pub bayes: HashMap<String, String>,
+    pub neural: HashMap<String, String>,
+}
 
 /// Manages Bayesian learning operations for the Rspamd Telegram bot.
 /// 
@@ -11,6 +45,7 @@ use crate::config::{rspamd, bayes};
 /// - Track learning statistics in Redis
 /// - Monitor classifier readiness
 /// - Manage learned message tracking
+/// - Integrate with neural network training
 pub struct BayesManager {
     redis_client: redis::Client,
     rspamd_client: Client,
@@ -36,7 +71,7 @@ impl BayesManager {
         })
     }
     
-    /// Learns a message as spam via Rspamd HTTP API.
+    /// Learns a message as spam via Rspamd HTTP API and triggers neural network training.
     /// 
     /// # Arguments
     /// 
@@ -66,6 +101,9 @@ impl BayesManager {
             // Increment spam message counter
             let _: i64 = conn.incr(bayes::BAYES_SPAM_MESSAGES_KEY, 1)?;
             
+            // Integrate with neural network training
+            self.update_neural_training_stats("spam", message_id, content).await?;
+            
             log::info!("Successfully learned message {} as spam", message_id);
             Ok(())
         } else {
@@ -75,7 +113,7 @@ impl BayesManager {
         }
     }
     
-    /// Learns a message as ham via Rspamd HTTP API.
+    /// Learns a message as ham via Rspamd HTTP API and triggers neural network training.
     /// 
     /// # Arguments
     /// 
@@ -105,12 +143,154 @@ impl BayesManager {
             // Increment ham message counter
             let _: i64 = conn.incr(bayes::BAYES_HAM_MESSAGES_KEY, 1)?;
             
+            // Integrate with neural network training
+            self.update_neural_training_stats("ham", message_id, content).await?;
+            
             log::info!("Successfully learned message {} as ham", message_id);
             Ok(())
         } else {
             let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
             log::error!("Failed to learn as ham: {} - {}", status, error_text);
             Err(anyhow::anyhow!("Failed to learn as ham: {} - {}", status, error_text))
+        }
+    }
+    
+    /// Updates neural network training statistics when learning messages.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `learning_type` - Either "spam" or "ham"
+    /// * `message_id` - The unique identifier for the message
+    /// * `content` - The message content for feature extraction
+    /// 
+    /// # Returns
+    /// 
+    /// A `Result<()>` indicating success or failure of the update operation.
+    async fn update_neural_training_stats(&self, learning_type: &str, message_id: &str, content: &str) -> Result<()> {
+        let neural_manager = NeuralManager::new()?;
+        let mut conn = self.redis_client.get_connection()?;
+        
+        // Update neural network statistics
+        let now = Utc::now().to_rfc3339();
+        
+        // Increment total messages
+        let _: i64 = conn.hincr(neural::NEURAL_STATS_KEY, "total_messages", 1)?;
+        
+        // Increment specific message type counter
+        match learning_type {
+            "spam" => {
+                let _: i64 = conn.hincr(neural::NEURAL_STATS_KEY, "spam_messages", 1)?;
+                log::info!("Neural network: Added spam message to training dataset");
+            }
+            "ham" => {
+                let _: i64 = conn.hincr(neural::NEURAL_STATS_KEY, "ham_messages", 1)?;
+                log::info!("Neural network: Added ham message to training dataset");
+            }
+            _ => {
+                log::warn!("Neural network: Unknown learning type '{}'", learning_type);
+                return Ok(());
+            }
+        }
+        
+        // Update last training timestamp
+        let _: () = conn.hset(neural::NEURAL_STATS_KEY, "last_training", &now)?;
+        
+        // Store message features for neural network training
+        self.store_neural_features(message_id, content, learning_type).await?;
+        
+        // Check if neural network is ready and log status
+        match neural_manager.is_ready() {
+            Ok(true) => {
+                log::info!("Neural network is ready, {} learning will contribute to model training", learning_type);
+                
+                // Increment training iterations when network is ready
+                let _: i64 = conn.hincr(neural::NEURAL_STATS_KEY, "training_iterations", 1)?;
+            }
+            Ok(false) => {
+                log::info!("Neural network is still training, {} learning will help build dataset", learning_type);
+            }
+            Err(e) => {
+                log::warn!("Could not check neural network readiness: {}", e);
+            }
+        }
+        
+        Ok(())
+    }
+    
+    /// Stores message features for neural network training.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `message_id` - The unique identifier for the message
+    /// * `content` - The message content to extract features from
+    /// * `learning_type` - Either "spam" or "ham"
+    /// 
+    /// # Returns
+    /// 
+    /// A `Result<()>` indicating success or failure of the storage operation.
+    async fn store_neural_features(&self, message_id: &str, content: &str, learning_type: &str) -> Result<()> {
+        let mut conn = self.redis_client.get_connection()?;
+        
+        // Extract basic text features
+        let features = self.extract_text_features(content);
+        
+        // Create feature record
+        let feature_key = format!("{}:{}", neural::NEURAL_FEATURES_KEY, message_id);
+        let feature_data = serde_json::json!({
+            "message_id": message_id,
+            "content_length": content.len(),
+            "word_count": features.word_count,
+            "link_count": features.link_count,
+            "emoji_count": features.emoji_count,
+            "caps_ratio": features.caps_ratio,
+            "learning_type": learning_type,
+            "timestamp": Utc::now().to_rfc3339(),
+            "features": features
+        });
+        
+        // Store features with expiration (7 days)
+        let _: () = conn.set_ex(&feature_key, feature_data.to_string(), 7 * 24 * 60 * 60)?;
+        
+        log::debug!("Stored neural features for message {}: {:?}", message_id, features);
+        Ok(())
+    }
+    
+    /// Extracts text features for neural network training.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `content` - The message content to analyze
+    /// 
+    /// # Returns
+    /// 
+    /// A `TextFeatures` struct containing extracted features.
+    fn extract_text_features(&self, content: &str) -> TextFeatures {
+        let word_count = content.split_whitespace().count();
+        let link_count = content.matches("http").count() + content.matches("www").count();
+        let emoji_count = content.chars().filter(|c| {
+            // Simple emoji detection - check for emoji ranges
+            let code = *c as u32;
+            (code >= 0x1F600 && code <= 0x1F64F) || // Emoticons
+            (code >= 0x1F300 && code <= 0x1F5FF) || // Miscellaneous Symbols and Pictographs
+            (code >= 0x1F680 && code <= 0x1F6FF) || // Transport and Map Symbols
+            (code >= 0x1F1E0 && code <= 0x1F1FF) || // Regional Indicator Symbols
+            (code >= 0x2600 && code <= 0x26FF) ||   // Miscellaneous Symbols
+            (code >= 0x2700 && code <= 0x27BF)      // Dingbats
+        }).count();
+        
+        let caps_count = content.chars().filter(|c| c.is_uppercase()).count();
+        let total_chars = content.chars().filter(|c| c.is_alphabetic()).count();
+        let caps_ratio = if total_chars > 0 {
+            caps_count as f64 / total_chars as f64
+        } else {
+            0.0
+        };
+        
+        TextFeatures {
+            word_count,
+            link_count,
+            emoji_count,
+            caps_ratio,
         }
     }
     
@@ -292,6 +472,74 @@ impl BayesManager {
         info.insert("ham_progress_percent".to_string(), ham_progress.to_string());
         
         Ok(info)
+    }
+    
+    /// Gets combined Bayesian and Neural Network statistics.
+    /// 
+    /// # Returns
+    /// 
+    /// A `Result<CombinedStats>` containing both Bayesian and Neural Network statistics.
+    pub fn get_combined_stats(&self) -> Result<CombinedStats> {
+        let bayes_stats = self.get_bayes_stats()?;
+        let neural_manager = NeuralManager::new()?;
+        let neural_stats = neural_manager.get_neural_stats()?;
+        
+        Ok(CombinedStats {
+            bayes: bayes_stats,
+            neural: neural_stats,
+        })
+    }
+    
+    /// Checks if both Bayesian and Neural Network classifiers are ready.
+    /// 
+    /// # Returns
+    /// 
+    /// A `Result<ClassifierReadiness>` containing readiness status for both classifiers.
+    pub fn check_classifier_readiness(&self) -> Result<ClassifierReadiness> {
+        let bayes_ready = self.is_ready()?;
+        let neural_manager = NeuralManager::new()?;
+        let neural_ready = neural_manager.is_ready()?;
+        
+        Ok(ClassifierReadiness {
+            bayes_ready,
+            neural_ready,
+            both_ready: bayes_ready && neural_ready,
+        })
+    }
+    
+    /// Gets detailed information about both classifiers.
+    /// 
+    /// # Returns
+    /// 
+    /// A `Result<DetailedClassifierInfo>` containing comprehensive classifier information.
+    pub fn get_detailed_classifier_info(&self) -> Result<DetailedClassifierInfo> {
+        let bayes_info = self.get_detailed_info()?;
+        let neural_manager = NeuralManager::new()?;
+        let neural_stats = neural_manager.get_neural_stats()?;
+        let neural_ready = neural_manager.is_ready()?;
+        
+        let mut neural_info = HashMap::new();
+        neural_info.insert("total_messages".to_string(), neural_stats.total_messages.to_string());
+        neural_info.insert("spam_messages".to_string(), neural_stats.spam_messages.to_string());
+        neural_info.insert("ham_messages".to_string(), neural_stats.ham_messages.to_string());
+        neural_info.insert("training_iterations".to_string(), neural_stats.training_iterations.to_string());
+        neural_info.insert("model_accuracy".to_string(), format!("{:.2}", neural_stats.model_accuracy * 100.0));
+        neural_info.insert("is_ready".to_string(), neural_ready.to_string());
+        neural_info.insert("status".to_string(), if neural_ready { "Ready".to_string() } else { "Training".to_string() });
+        neural_info.insert("min_samples_required".to_string(), neural::MIN_SAMPLES_REQUIRED.to_string());
+        
+        // Calculate neural network progress
+        let progress = if neural::MIN_SAMPLES_REQUIRED > 0 {
+            (neural_stats.total_messages * 100) / neural::MIN_SAMPLES_REQUIRED
+        } else {
+            0
+        };
+        neural_info.insert("progress_percent".to_string(), progress.to_string());
+        
+        Ok(DetailedClassifierInfo {
+            bayes: bayes_info,
+            neural: neural_info,
+        })
     }
 }
 

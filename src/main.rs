@@ -7,6 +7,7 @@ use rspamd_telegram_bot::config::{field, key};
 use rspamd_telegram_bot::admin_handlers;
 use rspamd_telegram_bot::ban_manager::BanManager;
 use rspamd_telegram_bot::bayes_manager::BayesManager;
+use rspamd_telegram_bot::neural_manager::NeuralManager;
 use rspamd_telegram_bot::migration;
 use std::env;
 
@@ -65,6 +66,19 @@ async fn main() {
                 interval.tick().await;
                 if let Err(err) = monitor_bayes_performance().await {
                     log::error!("Bayes monitoring failed: {:?}", err);
+                }
+            }
+        }
+    });
+
+    // Start Neural Network performance monitoring
+    tokio::spawn({
+        async move {
+            let mut interval = time::interval(Duration::from_secs(7200)); // Every 2 hours
+            loop {
+                interval.tick().await;
+                if let Err(err) = monitor_neural_performance().await {
+                    log::error!("Neural monitoring failed: {:?}", err);
                 }
             }
         }
@@ -143,6 +157,31 @@ async fn monitor_bayes_performance() -> Result<(), Box<dyn Error + Send + Sync>>
         log::info!("Bayes classifier is ready for classification");
     } else {
         log::info!("Bayes classifier is still training");
+    }
+    
+    Ok(())
+}
+
+async fn monitor_neural_performance() -> Result<(), Box<dyn Error + Send + Sync>> {
+    let neural_manager = NeuralManager::new()?;
+    
+    if let Ok(stats) = neural_manager.get_neural_stats() {
+        log::info!(
+            "Neural stats - Total: {} messages, Spam: {}, Ham: {}, Accuracy: {:.2}%, Iterations: {}",
+            stats.total_messages,
+            stats.spam_messages,
+            stats.ham_messages,
+            stats.model_accuracy * 100.0,
+            stats.training_iterations
+        );
+    }
+    
+    // Check if neural network is ready
+    let is_ready = neural_manager.is_ready()?;
+    if is_ready {
+        log::info!("Neural network is ready for classification");
+    } else {
+        log::info!("Neural network is still training");
     }
     
     Ok(())

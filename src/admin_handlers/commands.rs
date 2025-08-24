@@ -43,4 +43,12 @@ pub enum AdminCommand {
     BayesStats,
     #[command(description = "reset all Bayesian classifier data.")]
     BayesReset,
+    #[command(description = "show neural network statistics.")]
+    NeuralStats,
+    #[command(description = "reset neural network model and training data.")]
+    NeuralReset,
+    #[command(description = "show neural network training status.")]
+    NeuralStatus,
+    #[command(description = "show neural network feature analysis.")]
+    NeuralFeatures { message_id: String },
 }

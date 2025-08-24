@@ -1,12 +1,12 @@
-pub mod admin_handlers;
-pub mod admin_panel;
-pub mod handlers;
 pub mod config;
-pub mod ban_manager;
-pub mod migration;
-pub mod trust_manager;
-pub mod fuzzy_trainer;
 pub mod bayes_manager;
+pub mod neural_manager;
+pub mod fuzzy_trainer;
+pub mod trust_manager;
+pub mod migration;
+pub mod ban_manager;
+pub mod admin_handlers;
+pub mod handlers;
 
 use anyhow::Result;
 use redis::Connection;

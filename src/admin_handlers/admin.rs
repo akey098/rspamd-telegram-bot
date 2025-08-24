@@ -1,4 +1,4 @@
-use crate::admin_handlers::AdminCommand;
+use crate::admin_handlers::{AdminCommand, handle_neural_stats, handle_neural_reset, handle_neural_status, handle_neural_features};
 use crate::config::{field, key, suffix, ENABLED_FEATURES_KEY, reply_aware, rate_limit};
 use crate::trust_manager::{TrustManager, TrustedMessageType, TrustedMessageMetadata};
 use crate::bayes_manager::BayesManager;
@@ -277,7 +277,13 @@ pub async fn handle_admin_command(bot: Bot, msg: Message, cmd: AdminCommand) -> 
                     /learnspam <message_id> – learn a message as spam for Bayesian classifier\n\
                     /learnham <message_id> – learn a message as ham for Bayesian classifier\n\
                     /bayesstats – show Bayesian classifier statistics\n\
-                    /bayesreset – reset all Bayesian classifier data",
+                    /bayesreset – reset all Bayesian classifier data\n\
+                    \n\
+                    Neural Network Commands:\n\
+                    /neuralstats – show neural network statistics\n\
+                    /neuralstatus – show detailed neural network training status\n\
+                    /neuralreset – reset neural network model and training data\n\
+                    /neuralfeatures <message_id> – show neural network feature analysis",
                 ).await?;
             }
             AdminCommand::ManageFeatures => {
@@ -1043,6 +1049,42 @@ pub async fn handle_admin_command(bot: Bot, msg: Message, cmd: AdminCommand) -> 
                             format!("❌ Failed to reset Bayes data: {}", e)
                         ).await?;
                     }
+                }
+            }
+            
+            AdminCommand::NeuralStats => {
+                if let Err(e) = handle_neural_stats(bot.clone(), chat_id).await {
+                    bot.send_message(
+                        chat_id,
+                        format!("❌ Failed to get neural stats: {}", e)
+                    ).await?;
+                }
+            }
+            
+            AdminCommand::NeuralReset => {
+                if let Err(e) = handle_neural_reset(bot.clone(), chat_id).await {
+                    bot.send_message(
+                        chat_id,
+                        format!("❌ Failed to reset neural network: {}", e)
+                    ).await?;
+                }
+            }
+            
+            AdminCommand::NeuralStatus => {
+                if let Err(e) = handle_neural_status(bot.clone(), chat_id).await {
+                    bot.send_message(
+                        chat_id,
+                        format!("❌ Failed to get neural status: {}", e)
+                    ).await?;
+                }
+            }
+            
+            AdminCommand::NeuralFeatures { message_id } => {
+                if let Err(e) = handle_neural_features(bot.clone(), chat_id, message_id).await {
+                    bot.send_message(
+                        chat_id,
+                        format!("❌ Failed to get neural features: {}", e)
+                    ).await?;
                 }
             }
 

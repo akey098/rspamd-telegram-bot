@@ -112,6 +112,24 @@ pub mod bayes {
     pub const AUTOLEARN_HAM_THRESHOLD: f64 = -0.5;
 }
 
+/// **Neural Network Configuration:** settings for Rspamd neural network integration.
+pub mod neural {
+    /// Key for neural network statistics in Redis.
+    pub const NEURAL_STATS_KEY: &str = "neural:stats";
+    /// Key for neural network model in Redis.
+    pub const NEURAL_MODEL_KEY: &str = "neural:model";
+    /// Key for neural network features in Redis.
+    pub const NEURAL_FEATURES_KEY: &str = "neural:features";
+    /// Minimum samples required for neural network training.
+    pub const MIN_SAMPLES_REQUIRED: i64 = 100;
+    /// Neural network confidence threshold.
+    pub const CONFIDENCE_THRESHOLD: f64 = 0.7;
+    /// Neural network spam threshold.
+    pub const SPAM_THRESHOLD: f64 = 6.0;
+    /// Neural network ham threshold.
+    pub const HAM_THRESHOLD: f64 = -2.0;
+}
+
 /// **Rspamd Symbol Names:** spam detection symbols used by Rspamd and the bot.
 pub mod symbol {
     /// Symbol for flooding behavior detected (`TG_FLOOD`).
@@ -192,6 +210,14 @@ pub mod symbol {
     pub const BAYES_HAM: &str = "BAYES_HAM";
     /// Symbol for Bayesian unsure classification (`BAYES_UNSURE`).
     pub const BAYES_UNSURE: &str = "BAYES_UNSURE";
+    
+    // Neural network symbols
+    /// Symbol for neural network spam detection (`NEURAL_SPAM`).
+    pub const NEURAL_SPAM: &str = "NEURAL_SPAM";
+    /// Symbol for neural network ham detection (`NEURAL_HAM`).
+    pub const NEURAL_HAM: &str = "NEURAL_HAM";
+    /// Symbol for neural network uncertain classification (`NEURAL_UNCERTAIN`).
+    pub const NEURAL_UNCERTAIN: &str = "NEURAL_UNCERTAIN";
 }
 
 /// Features that are enabled for every chat by default.

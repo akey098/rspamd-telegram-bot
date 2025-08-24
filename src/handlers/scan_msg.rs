@@ -4,6 +4,9 @@ use teloxide::prelude::*;
 use get_if_addrs::{get_if_addrs, IfAddr};
 use crate::trust_manager::{TrustManager, TrustedMessageType};
 use crate::config::reply_aware;
+use crate::neural_manager::NeuralManager;
+use crate::config::neural;
+use log;
 
 /// Scan a Telegram message: real Rspamd first, heuristic fallback.
 pub async fn scan_msg(msg: Message, text: String) -> Result<RspamdScanReply, RspamdError> {
@@ -245,6 +248,33 @@ pub async fn scan_msg_with_advanced_info(msg: Message, text: String) -> Result<(
         .build();
     
     let scan_result = scan_async(&options, email).await?;
+    
+    // Process neural network results if available
+    let neural_manager = NeuralManager::new();
+    if let Ok(manager) = neural_manager {
+        // Check for neural network symbols
+        if manager.has_neural_symbols(&scan_result) {
+            if let Some(classification) = manager.get_neural_classification(&scan_result) {
+                log::info!("Neural network classification: {}", classification);
+                
+                // Extract features for analysis
+                let features = manager.extract_features(&scan_result);
+                log::debug!("Neural features: {:?}", features);
+                
+                // Check confidence
+                if let Some(confidence) = manager.get_neural_confidence(&scan_result) {
+                    if confidence >= neural::CONFIDENCE_THRESHOLD {
+                        log::info!("High confidence neural classification: {} (confidence: {:.2})", 
+                                  classification, confidence);
+                    } else {
+                        log::info!("Low confidence neural classification: {} (confidence: {:.2})", 
+                                  classification, confidence);
+                    }
+                }
+            }
+        }
+    }
+    
     Ok((scan_result, reply_type, spam_patterns))
 }
 
