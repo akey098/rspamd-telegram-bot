@@ -54,10 +54,10 @@ fn start_mock_server() {
                         // Parse the email body to extract message content and headers
                         let email_str = String::from_utf8_lossy(&body);
                         let text = extract_message_text(&email_str);
-                        let (user_id, chat_id) = extract_telegram_headers(&email_str);
+                        let (user_id, chat_id, message_id) = extract_telegram_headers(&email_str);
                         
                         // Run heuristic detection
-                        let symbols = detect_symbols(&text, user_id, chat_id);
+                        let symbols = detect_symbols(&text, user_id, chat_id, message_id);
                         
                         let response = json!({
                             "is_skipped": false,
@@ -104,18 +104,18 @@ fn start_mock_server() {
                         };
                         
                         // If we can't parse the email properly, try to extract from headers
-                        let (text, user_id, chat_id) = if email_str.contains("X-Telegram-User") {
+                        let (text, user_id, chat_id, message_id) = if email_str.contains("X-Telegram-User") {
                             let text = extract_message_text(&email_str);
-                            let (user_id, chat_id) = extract_telegram_headers(&email_str);
-                            (text, user_id, chat_id)
+                            let (user_id, chat_id, message_id) = extract_telegram_headers(&email_str);
+                            (text, user_id, chat_id, message_id)
                         } else {
                             // Fallback: this shouldn't happen with proper decompression
                             eprintln!("Could not find Telegram headers in email");
-                            ("".to_string(), 0u64, 0i64)
+                            ("".to_string(), 0u64, 0i64, 0i32)
                         };
                         
                         // Run heuristic detection
-                        let symbols = detect_symbols(&text, user_id, chat_id);
+                        let symbols = detect_symbols(&text, user_id, chat_id, message_id);
                         
                         let response = json!({
                             "is_skipped": false,
@@ -182,9 +182,10 @@ fn extract_message_text(email: &str) -> String {
     }
 }
 
-fn extract_telegram_headers(email: &str) -> (u64, i64) {
+fn extract_telegram_headers(email: &str) -> (u64, i64, i32) {
     let mut user_id = 0;
     let mut chat_id = 0;
+    let mut message_id = 0;
     
     for line in email.lines() {
         if line.starts_with("X-Telegram-User:") {
@@ -195,10 +196,17 @@ fn extract_telegram_headers(email: &str) -> (u64, i64) {
             if let Ok(id) = line.split(':').nth(1).unwrap_or("").trim().parse::<i64>() {
                 chat_id = id;
             }
+        } else if line.starts_with("Message-ID:") {
+            // Extract message ID from format: <user_id.chat_id@example.com>
+            if let Some(id_part) = line.split('<').nth(1).and_then(|s| s.split('.').next()) {
+                if let Ok(id) = id_part.parse::<i32>() {
+                    message_id = id;
+                }
+            }
         }
     }
     
-    (user_id, chat_id)
+    (user_id, chat_id, message_id)
 }
 
 fn flush_redis() {
@@ -223,7 +231,7 @@ fn flush_redis() {
     }
 }
 
-fn detect_symbols(text: &str, user_id: u64, chat_id: i64) -> serde_json::Value {
+fn detect_symbols(text: &str, user_id: u64, chat_id: i64, message_id: i32) -> serde_json::Value {
     let mut symbols = serde_json::Map::new();
     
     // Connect to Redis to get/update state
@@ -232,19 +240,46 @@ fn detect_symbols(text: &str, user_id: u64, chat_id: i64) -> serde_json::Value {
     
     // Check for reply-aware filtering symbols
     // This simulates what Rspamd would do when it sees In-Reply-To headers
-    // For now, we'll add a simple check for reply symbols based on trusted messages
-    let trusted_pattern = format!("tg:trusted:*");
-    let trusted_keys: Vec<String> = conn.keys(&trusted_pattern).unwrap_or_default();
+    // Check if this specific message is tracked as a reply to any trusted message
+    let reply_pattern = format!("tg:replies:{}:*:*", chat_id);
+    let reply_keys: Vec<String> = conn.keys(&reply_pattern).unwrap_or_default();
     
-    // Simple reply detection: if there are trusted messages and this is a reply, add symbols
-    if !trusted_keys.is_empty() {
-        // Check if this specific message is tracked as a reply to any trusted message
-        let reply_pattern = format!("tg:replies:{}:*:{}", chat_id, user_id);
-        let reply_keys: Vec<String> = conn.keys(&reply_pattern).unwrap_or_default();
-        
-        if !reply_keys.is_empty() {
-            // This is a reply to a trusted message, add appropriate symbol
-            symbols.insert("TG_REPLY_BOT".to_string(), json!({"name": "TG_REPLY_BOT", "score": -3.0, "metric_score": -3.0}));
+    // Check if any of the reply keys match this user's message
+    for reply_key in reply_keys {
+        let parts: Vec<&str> = reply_key.split(':').collect();
+        if parts.len() >= 5 {
+            // Key format: tg:replies:<chat_id>:<trusted_message_id>:<reply_message_id>
+            if let Ok(reply_message_id) = parts[4].parse::<i32>() {
+                // Check if this reply message ID corresponds to the current message
+                // Only add the symbol if the current message ID matches this reply message ID
+                if reply_message_id == message_id {
+                
+                // Check if the trusted message exists and get its type
+                if let Ok(trusted_message_id) = parts[3].parse::<i32>() {
+                    let trusted_key = format!("tg:trusted:{}", trusted_message_id);
+                    let trusted_exists: bool = conn.exists(&trusted_key).unwrap_or(false);
+                    
+                    if trusted_exists {
+                        // Get the trusted message metadata to determine the type
+                        let metadata_key = format!("tg:trusted:{}:metadata{}", trusted_message_id, trusted_message_id);
+                        if let Ok(message_type) = conn.hget::<_, _, String>(&metadata_key, "trusted_type") {
+                            match message_type.as_str() {
+                                "bot" => {
+                                    symbols.insert("TG_REPLY_BOT".to_string(), json!({"name": "TG_REPLY_BOT", "score": -3.0, "metric_score": -3.0}));
+                                },
+                                "admin" => {
+                                    symbols.insert("TG_REPLY_ADMIN".to_string(), json!({"name": "TG_REPLY_ADMIN", "score": -2.0, "metric_score": -2.0}));
+                                },
+                                "verified" => {
+                                    symbols.insert("TG_REPLY_VERIFIED".to_string(), json!({"name": "TG_REPLY_VERIFIED", "score": -1.0, "metric_score": -1.0}));
+                                },
+                                _ => {}
+                            }
+                        }
+                    }
+                } // Close the if reply_message_id == message_id block
+                }
+            }
         }
     }
     

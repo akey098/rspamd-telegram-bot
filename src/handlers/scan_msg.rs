@@ -13,6 +13,7 @@ pub async fn scan_msg(msg: Message, text: String) -> Result<RspamdScanReply, Rsp
     let user_id = user.id.to_string();
     let user_name = user.username.as_deref().unwrap_or("anonymous").to_string();
     let chat_id = msg.chat.id;
+    let msg_id = msg.id.0.to_string();
     let date = Utc::now().to_rfc2822();
     let text = text;
     let ip = detect_local_ipv4().unwrap_or_else(|| "127.0.0.1/32".to_string());
@@ -79,7 +80,7 @@ pub async fn scan_msg(msg: Message, text: String) -> Result<RspamdScanReply, Rsp
         From: telegram{user_name}@example.com\r\n\
         To: telegram{chat_id}@example.com\r\n\
         Subject: Telegram message\r\n\
-        Message-ID: <{user_id}.{chat_id}@example.com>\r\n\
+        Message-ID: <{msg_id}.{chat_id}@example.com>\r\n\
         X-Telegram-User: {user_id}\r\n\
         X-Telegram-Chat: {chat_id}\r\n\
         X-TG-User: {user_id}\r\n",
@@ -88,6 +89,7 @@ pub async fn scan_msg(msg: Message, text: String) -> Result<RspamdScanReply, Rsp
         user_name = user_name,
         user_id = user_id,
         chat_id = chat_id,
+        msg_id = msg_id,
     );
     
     // Add In-Reply-To header if this is a reply
