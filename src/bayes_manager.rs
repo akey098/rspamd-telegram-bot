@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use anyhow::Result;
 use crate::config::{rspamd, bayes, neural};
 use crate::neural_manager::NeuralManager;
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
 /// Text features extracted for neural network training.
@@ -82,12 +82,25 @@ impl BayesManager {
     /// 
     /// A `Result<()>` indicating success or failure of the learning operation.
     pub async fn learn_spam(&self, message_id: &str, content: &str) -> Result<()> {
+        // Format content as a proper email message with headers
+        let email_content = format!(
+            "Message-ID: <{}@telegram.bot>\r\n\
+             From: telegram-bot@local\r\n\
+             To: rspamd@local\r\n\
+             Subject: Telegram message {}\r\n\
+             Content-Type: text/plain; charset=utf-8\r\n\
+             \r\n\
+             {}",
+            message_id, message_id, content
+        );
+        
         let url = format!("{}/learnspam", self.rspamd_url);
         
         let response = self.rspamd_client
             .post(&url)
             .header("Password", &self.rspamd_password)
-            .body(content.to_string())
+            .header("Content-Type", "message/rfc822")
+            .body(email_content)
             .send()
             .await?;
             
@@ -108,6 +121,13 @@ impl BayesManager {
             Ok(())
         } else {
             let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+            
+            // Handle specific Rspamd error cases
+            if error_text.contains("already learned") {
+                log::warn!("Message {} already learned as spam, ignoring duplicate", message_id);
+                return Ok(()); // Treat as success since the message is already learned
+            }
+            
             log::error!("Failed to learn as spam: {} - {}", status, error_text);
             Err(anyhow::anyhow!("Failed to learn as spam: {} - {}", status, error_text))
         }
@@ -124,12 +144,25 @@ impl BayesManager {
     /// 
     /// A `Result<()>` indicating success or failure of the learning operation.
     pub async fn learn_ham(&self, message_id: &str, content: &str) -> Result<()> {
+        // Format content as a proper email message with headers
+        let email_content = format!(
+            "Message-ID: <{}@telegram.bot>\r\n\
+             From: telegram-bot@local\r\n\
+             To: rspamd@local\r\n\
+             Subject: Telegram message {}\r\n\
+             Content-Type: text/plain; charset=utf-8\r\n\
+             \r\n\
+             {}",
+            message_id, message_id, content
+        );
+        
         let url = format!("{}/learnham", self.rspamd_url);
         
         let response = self.rspamd_client
             .post(&url)
             .header("Password", &self.rspamd_password)
-            .body(content.to_string())
+            .header("Content-Type", "message/rfc822")
+            .body(email_content)
             .send()
             .await?;
             
@@ -150,6 +183,13 @@ impl BayesManager {
             Ok(())
         } else {
             let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+            
+            // Handle specific Rspamd error cases
+            if error_text.contains("already learned") {
+                log::warn!("Message {} already learned as ham, ignoring duplicate", message_id);
+                return Ok(()); // Treat as success since the message is already learned
+            }
+            
             log::error!("Failed to learn as ham: {} - {}", status, error_text);
             Err(anyhow::anyhow!("Failed to learn as ham: {} - {}", status, error_text))
         }
@@ -395,6 +435,47 @@ impl BayesManager {
         } else {
             Ok(None)
         }
+    }
+    
+    /// Validates message content before learning.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `message_id` - The unique identifier for the message
+    /// * `content` - The message content to validate
+    /// 
+    /// # Returns
+    /// 
+    /// A `Result<()>` indicating whether the content is valid for learning.
+    pub fn validate_content_for_learning(&self, message_id: &str, content: &str) -> Result<()> {
+        if content.trim().is_empty() {
+            return Err(anyhow::anyhow!("Cannot learn empty message content for message ID: {}", message_id));
+        }
+        
+        if content.len() < 10 {
+            return Err(anyhow::anyhow!(
+                "Message content too short ({} chars) for learning. Minimum 10 characters required. Content: '{}'",
+                content.len(),
+                content
+            ));
+        }
+        
+        // Check if message is already learned
+        if let Ok(is_learned) = self.is_message_learned(message_id) {
+            if is_learned {
+                if let Ok(learning_type) = self.get_message_learning_type(message_id) {
+                    if let Some(learned_as) = learning_type {
+                        return Err(anyhow::anyhow!(
+                            "Message {} has already been learned as {}. Cannot learn it again.",
+                            message_id,
+                            learned_as
+                        ));
+                    }
+                }
+            }
+        }
+        
+        Ok(())
     }
     
     /// Resets all Bayesian classifier data.

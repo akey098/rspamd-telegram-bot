@@ -1,4 +1,4 @@
-use crate::config::{field, key, BAN_COUNTER_REDUCTION_INTERVAL, symbol, bayes};
+use crate::config::{field, key, symbol, bayes};
 use crate::handlers::scan_msg;
 use crate::trust_manager::TrustManager;
 use crate::fuzzy_trainer::FuzzyTrainer;
@@ -61,6 +61,14 @@ pub async fn handle_message(
             return Ok(());
         }
     };
+    
+    // Store message content in Redis for learning commands
+    let redis_client = redis::Client::open("redis://127.0.0.1/").expect("Failed to connect to Redis");
+    let mut redis_conn = redis_client.get_connection().expect("Failed to get Redis connection");
+    let message_key = format!("tg:message:{}", message.id.0);
+    if let Err(e) = redis_conn.set_ex::<_, _, ()>(&message_key, &text, 86400) { // 24 hour TTL
+        eprintln!("Failed to store message content in Redis: {}", e);
+    }
     
     // Auto-learning integration for Bayesian classifier
     let bayes_manager = BayesManager::new();
@@ -146,11 +154,6 @@ pub async fn handle_message(
         "none"
     };
     
-    let redis_client =
-        redis::Client::open("redis://127.0.0.1/").expect("Failed to connect to Redis");
-    let mut redis_conn = redis_client
-        .get_connection()
-        .expect("Failed to get Redis connection");
     let user_id = message.from.unwrap().id;
     let chat_id = message.chat.id;
     let key = format!("{}{}", key::TG_CHATS_PREFIX, chat_id);
@@ -200,64 +203,22 @@ pub async fn handle_message(
             
             // If this is the 3rd ban, trigger permanent ban
             if banned_q >= 2 { // 0-indexed, so 2 means 3rd ban
-                let _ = bot.ban_chat_member(chat_id, user_id).await;
-                println!("User {} in chat {} permanently banned (3rd ban)", user_id, chat_id);
-                
-                let notify_text = format!("Permanently banned user {} in chat {} for spam (3rd ban)", user_id, chat_id);
-                if admin_chat_exists {
-                    bot.send_message(ChatId(admin_chat[0]), notify_text).await?;
-                } else {
-                    bot.send_message(chat_id, notify_text).await?;
-                }
-            } else {
-                // Temporary ban - mute user for the configured duration
-                let mute_duration = 3600; // 1 hour default mute duration
-                println!("Attempting to mute user {} in chat {} for {} seconds", user_id, chat_id, mute_duration);
-                
-                // Check bot permissions first
-                match check_bot_permissions(&bot, chat_id).await {
-                    Ok(_) => println!("Bot has required permissions"),
-                    Err(e) => {
-                        eprintln!("Bot permission check failed: {}", e);
-                        // Continue anyway - the mute might still work
-                    }
-                }
-                
-                match mute_user_for(bot.clone(), chat_id, user_id, mute_duration).await {
-                    Ok(_) => println!("Successfully muted user {} in chat {}", user_id, chat_id),
-                    Err(e) => eprintln!("Failed to mute user {} in chat {}: {}", user_id, chat_id, e),
-                }
-                
-                // Set up automatic ban counter reduction
-                let reduction_time = Utc::now().timestamp() + BAN_COUNTER_REDUCTION_INTERVAL;
                 let _: () = redis_conn
-                    .hset(&user_key, "ban_reduction_time", reduction_time.to_string())
-                    .expect("Failed to set ban reduction time");
-                
-                let notify_text = format!(
-                    "Deleted message {} from user {} in chat {}. Muted user for {} seconds. Ban count: {}/3",
-                    message.id, user_id, chat_id, mute_duration, banned_q + 1
-                );
-                if admin_chat_exists {
-                    bot.send_message(ChatId(admin_chat[0]), notify_text).await?;
-                } else {
-                    bot.send_message(chat_id, notify_text).await?;
-                }
-            }
-        }
-
-        // Permanently ban the user and remove the message (legacy - should not be used)
-        "tg_perm_ban" => {
-            let _ = bot.delete_message(chat_id, message.id).await;
-            let _ = bot.ban_chat_member(chat_id, user_id).await;
-            println!("User {} in chat {} permanently banned", user_id, chat_id);
-
-            // Teach fuzzy storage after deletion
-            if let Err(e) = FUZZY_TRAINER.teach_fuzzy(&text_for_fuzzy).await {
-                eprintln!("Failed to teach fuzzy storage: {}", e);
+                    .hset(&user_key, field::PERM_BANNED, "1")
+                    .expect("Failed to set permanent ban");
+                println!("User {} permanently banned after 3rd violation.", user_id);
+            } else {
+                // Set temporary ban with expiration
+                let _: () = redis_conn
+                    .expire(&user_key, 3600) // 1 hour ban
+                    .expect("Failed to set ban expiration");
+                println!("User {} temporarily banned for 1 hour.", user_id);
             }
 
-            let notify_text = format!("Banned user {} in chat {} for spam", user_id, chat_id);
+            let notify_text = format!(
+                "Banned user {} from chat {} for spam (message {}).",
+                user_id, chat_id, message.id
+            );
             if admin_chat_exists {
                 bot.send_message(ChatId(admin_chat[0]), notify_text).await?;
             } else {
@@ -320,10 +281,8 @@ pub async fn handle_message(
         println!("Adjusted score after reputation: {} (original: {})", adjusted_score, scan_result.score);
     }
     for symbol in scan_result.symbols {
-        println!("{} {} {} ", symbol.0, symbol.1.score, symbol.1.metric_score);
+        println!("Symbol: {} Score: {}", symbol.0, symbol.1.score);
     }
-    
-    
     Ok(())
 }
 

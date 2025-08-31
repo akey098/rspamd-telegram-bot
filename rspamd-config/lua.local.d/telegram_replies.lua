@@ -44,7 +44,7 @@ local config = {
 -- Initialize Redis connection
 local redis_params = lua_redis.parse_redis_server('telegram')
 if not redis_params then
-    rspamd_logger.errx(nil, 'Failed to parse Redis server for telegram replies module')
+    rspamd_logger.errx(rspamd_config, 'Failed to parse Redis server for telegram replies module')
     return
 end
 

@@ -274,7 +274,7 @@ impl TrustManager {
         let spam_key = format!("{}{}", rate_limit::SPAM_PATTERN_PREFIX, user_id.0);
         
         for pattern in patterns {
-            conn.sadd(&spam_key, pattern)?;
+            conn.sadd::<_, _, ()>(&spam_key, pattern)?;
         }
         
         // Set TTL for spam tracking

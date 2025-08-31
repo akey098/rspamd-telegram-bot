@@ -51,4 +51,8 @@ pub enum AdminCommand {
     NeuralStatus,
     #[command(description = "show neural network feature analysis.")]
     NeuralFeatures { message_id: String },
+    #[command(description = "list recent messages stored in Redis (for debugging).")]
+    ListMessages,
+    #[command(description = "check learning status of a specific message.")]
+    CheckMessage { message_id: String },
 }

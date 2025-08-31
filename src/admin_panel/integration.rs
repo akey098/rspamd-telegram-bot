@@ -3,21 +3,42 @@
 use anyhow::Result;
 use teloxide::{
     prelude::*,
-    types::{Message, Update},
+    types::{Message, Update, BotCommandScope},
     utils::command::BotCommands,
+    payloads::SetMyCommandsSetters,
 };
 
 use crate::admin_panel::commands::{AdminPanelCommand, handle_admin_panel_command};
 
+/// Helper function to parse commands that may have bot username appended
+fn parse_command_with_botname<T: BotCommands>(text: &str, bot_name: &str) -> Result<T, teloxide::utils::command::ParseError> {
+    T::parse(text, bot_name).or_else(|_| {
+        // If parsing fails, try to extract command without bot username
+        if text.starts_with('/') {
+            let parts: Vec<&str> = text.splitn(2, '@').collect();
+            if parts.len() == 2 {
+                // Command has @botname format, try parsing just the command part
+                T::parse(parts[0], bot_name)
+            } else {
+                // No @ found, return original error
+                T::parse(text, bot_name)
+            }
+        } else {
+            // Not a command, return original error
+            T::parse(text, bot_name)
+        }
+    })
+}
+
 /// Check if a message contains an admin panel command
 pub fn is_admin_panel_command(text: &str) -> bool {
-    AdminPanelCommand::parse(text, "rspamd-bot").is_ok()
+    parse_command_with_botname::<AdminPanelCommand>(text, "rspamd-bot").is_ok()
 }
 
 /// Handle admin panel commands in the message handler
 pub async fn handle_admin_panel_message(bot: Bot, msg: Message) -> Result<()> {
     if let Some(text) = msg.text() {
-        if let Ok(cmd) = AdminPanelCommand::parse(text, "rspamd-bot") {
+        if let Ok(cmd) = parse_command_with_botname::<AdminPanelCommand>(text, "rspamd-bot") {
             handle_admin_panel_command(bot, msg, cmd).await?;
         }
     }
@@ -29,15 +50,13 @@ pub async fn handle_admin_panel_message(bot: Bot, msg: Message) -> Result<()> {
 pub async fn integrated_message_handler(bot: Bot, msg: Message) -> Result<()> {
     if let Some(text) = msg.text() {
         // First check if it's an admin panel command
-        if is_admin_panel_command(text) {
-            if let Ok(cmd) = AdminPanelCommand::parse(text, "rspamd-bot") {
-                handle_admin_panel_command(bot.clone(), msg.clone(), cmd).await?;
-                return Ok(());
-            }
+        if let Ok(cmd) = parse_command_with_botname::<AdminPanelCommand>(text, "rspamd-bot") {
+            handle_admin_panel_command(bot.clone(), msg.clone(), cmd).await?;
+            return Ok(());
         }
         
         // If not an admin panel command, handle with existing admin commands
-        if let Ok(cmd) = crate::admin_handlers::AdminCommand::parse(text, "rspamd-bot") {
+        if let Ok(cmd) = parse_command_with_botname::<crate::admin_handlers::AdminCommand>(text, "rspamd-bot") {
             crate::admin_handlers::handle_admin_command(bot.clone(), msg.clone(), cmd).await?;
             return Ok(());
         }
@@ -66,7 +85,7 @@ pub async fn setup_bot_commands(bot: &Bot) -> Result<()> {
     all_commands.extend(admin_panel_commands);
     
     // Set bot commands
-    bot.set_my_commands(all_commands).await?;
+    bot.set_my_commands(all_commands).scope(BotCommandScope::Default).await?;
     
     Ok(())
 }

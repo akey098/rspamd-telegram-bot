@@ -283,7 +283,11 @@ pub async fn handle_admin_command(bot: Bot, msg: Message, cmd: AdminCommand) -> 
                     /neuralstats – show neural network statistics\n\
                     /neuralstatus – show detailed neural network training status\n\
                     /neuralreset – reset neural network model and training data\n\
-                    /neuralfeatures <message_id> – show neural network feature analysis",
+                    /neuralfeatures <message_id> – show neural network feature analysis\n\
+                    \n\
+                    Debug Commands:\n\
+                    /listmessages – list recent messages stored in Redis (for debugging)\n\
+                    /checkmessage <message_id> – check learning status of a specific message",
                 ).await?;
             }
             AdminCommand::ManageFeatures => {
@@ -912,6 +916,15 @@ pub async fn handle_admin_command(bot: Bot, msg: Message, cmd: AdminCommand) -> 
                     }
                 };
                 
+                // Validate content before learning
+                if let Err(e) = bayes_manager.validate_content_for_learning(&message_id, &content) {
+                    bot.send_message(
+                        chat_id,
+                        format!("❌ Validation failed: {}", e)
+                    ).await?;
+                    return Ok(());
+                }
+                
                 match bayes_manager.learn_spam(&message_id, &content).await {
                     Ok(()) => {
                         bot.send_message(
@@ -950,6 +963,15 @@ pub async fn handle_admin_command(bot: Bot, msg: Message, cmd: AdminCommand) -> 
                         return Ok(());
                     }
                 };
+                
+                // Validate content before learning
+                if let Err(e) = bayes_manager.validate_content_for_learning(&message_id, &content) {
+                    bot.send_message(
+                        chat_id,
+                        format!("❌ Validation failed: {}", e)
+                    ).await?;
+                    return Ok(());
+                }
                 
                 match bayes_manager.learn_ham(&message_id, &content).await {
                     Ok(()) => {
@@ -1087,6 +1109,125 @@ pub async fn handle_admin_command(bot: Bot, msg: Message, cmd: AdminCommand) -> 
                     ).await?;
                 }
             }
+            
+            AdminCommand::ListMessages => {
+                // Get all message keys from Redis
+                let keys: Vec<String> = match redis_conn.keys("tg:message:*") {
+                    Ok(keys) => keys,
+                    Err(e) => {
+                        bot.send_message(
+                            chat_id,
+                            format!("❌ Failed to get message keys: {}", e)
+                        ).await?;
+                        return Ok(());
+                    }
+                };
+                
+                if keys.is_empty() {
+                    bot.send_message(
+                        chat_id,
+                        "📝 No messages found in Redis storage. Messages are stored for 24 hours after processing."
+                    ).await?;
+                    return Ok(());
+                }
+                
+                // Get the 10 most recent messages
+                let mut message_list = Vec::new();
+                for key in keys.iter().take(10) {
+                    if let Some(message_id) = key.strip_prefix("tg:message:") {
+                        if let Ok(content) = redis_conn.get::<_, String>(key) {
+                            let preview = if content.len() > 50 {
+                                format!("{}...", &content[..50])
+                            } else {
+                                content
+                            };
+                            message_list.push(format!("ID: {} | Content: {}", message_id, preview));
+                        }
+                    }
+                }
+                
+                let response = if message_list.is_empty() {
+                    "📝 No message content found in Redis storage.".to_string()
+                } else {
+                    format!(
+                        "📝 Recent messages in Redis storage (showing up to 10):\n\n{}",
+                        message_list.join("\n\n")
+                    )
+                };
+                
+                bot.send_message(chat_id, response).await?;
+            }
+
+            AdminCommand::CheckMessage { message_id } => {
+                let bayes_manager = match BayesManager::new() {
+                    Ok(manager) => manager,
+                    Err(e) => {
+                        bot.send_message(
+                            chat_id,
+                            format!("❌ Failed to create Bayes manager: {}", e)
+                        ).await?;
+                        return Ok(());
+                    }
+                };
+                
+                // Check if message exists in Redis
+                let key = format!("tg:message:{}", message_id);
+                let content_exists: bool = match redis_conn.exists(&key) {
+                    Ok(exists) => exists,
+                    Err(e) => {
+                        bot.send_message(
+                            chat_id,
+                            format!("❌ Failed to check message existence: {}", e)
+                        ).await?;
+                        return Ok(());
+                    }
+                };
+                
+                // Check learning status
+                let learning_status = match bayes_manager.get_message_learning_type(&message_id) {
+                    Ok(status) => status,
+                    Err(e) => {
+                        bot.send_message(
+                            chat_id,
+                            format!("❌ Failed to check learning status: {}", e)
+                        ).await?;
+                        return Ok(());
+                    }
+                };
+                
+                let mut response = format!("📋 Message Status for ID: {}\n\n", message_id);
+                
+                if content_exists {
+                    response.push_str("✅ Message content found in Redis\n");
+                    
+                    // Get content preview
+                    if let Ok(content) = redis_conn.get::<_, String>(&key) {
+                        let preview = if content.len() > 100 {
+                            format!("{}...", &content[..100])
+                        } else {
+                            content
+                        };
+                        response.push_str(&format!("📝 Content preview: {}\n", preview));
+                    }
+                } else {
+                    response.push_str("❌ Message content not found in Redis\n");
+                    response.push_str("💡 Message may have expired (24h TTL) or was never stored\n");
+                }
+                
+                match learning_status {
+                    Some(learned_as) => {
+                        response.push_str(&format!("🎯 Learning status: Already learned as {}\n", learned_as));
+                    }
+                    None => {
+                        response.push_str("🎯 Learning status: Not learned yet\n");
+                        if content_exists {
+                            response.push_str("💡 You can use /learnspam or /learnham to learn this message\n");
+                        }
+                    }
+                }
+                
+                bot.send_message(chat_id, response).await?;
+            }
 
         }
     } else {
@@ -1111,11 +1252,18 @@ async fn get_message_content(redis_conn: &mut redis::Connection, message_id: &st
     let content: Option<String> = redis_conn.get(&key)?;
     
     if let Some(content) = content {
+        if content.is_empty() {
+            return Err(anyhow::anyhow!("Message content is empty for ID: {}", message_id));
+        }
         Ok(content)
     } else {
-        // If not found in Redis, return a placeholder message
-        // In a real implementation, you might want to fetch from Telegram API
-        Ok(format!("Message content not found for ID: {}", message_id))
+        // If not found in Redis, return a more descriptive error
+        Err(anyhow::anyhow!(
+            "Message content not found in Redis for ID: {}. \
+            The message may have expired (24h TTL) or was never stored. \
+            Try using a recent message ID.",
+            message_id
+        ))
     }
 }
 

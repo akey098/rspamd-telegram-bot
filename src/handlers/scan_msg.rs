@@ -3,7 +3,6 @@ use rspamd_client::{config::Config, error::RspamdError, protocol::RspamdScanRepl
 use teloxide::prelude::*;
 use get_if_addrs::{get_if_addrs, IfAddr};
 use crate::trust_manager::{TrustManager, TrustedMessageType};
-use crate::config::reply_aware;
 use crate::neural_manager::NeuralManager;
 use crate::config::neural;
 use log;

@@ -4,13 +4,33 @@ use crate::handlers::handle_message;
 use redis::{Commands, RedisResult};
 use teloxide::dispatching::{Dispatcher, UpdateFilterExt};
 use teloxide::dptree;
-use teloxide::payloads::{AnswerCallbackQuerySetters, SendMessageSetters};
+use teloxide::payloads::{AnswerCallbackQuerySetters, SendMessageSetters, SetMyCommandsSetters};
 use teloxide::prelude::{CallbackQuery, ChatId, ChatMemberUpdated, Message, Requester, Update};
-use teloxide::types::{BotCommand, ChatKind, ChatMemberStatus, InlineKeyboardButton, InlineKeyboardMarkup};
+use teloxide::types::{BotCommand, BotCommandScope, ChatKind, ChatMemberStatus, InlineKeyboardButton, InlineKeyboardMarkup};
 use teloxide::utils::command::BotCommands;
 use teloxide::{Bot, RequestError};
 use std::fmt::Write;
 use crate::config::{field, key, suffix, DEFAULT_FEATURES, ENABLED_FEATURES_KEY};
+
+/// Helper function to parse commands that may have bot username appended
+fn parse_command_with_botname<T: teloxide::utils::command::BotCommands>(text: &str, bot_name: &str) -> Result<T, teloxide::utils::command::ParseError> {
+    T::parse(text, bot_name).or_else(|_| {
+        // If parsing fails, try to extract command without bot username
+        if text.starts_with('/') {
+            let parts: Vec<&str> = text.splitn(2, '@').collect();
+            if parts.len() == 2 {
+                // Command has @botname format, try parsing just the command part
+                T::parse(parts[0], bot_name)
+            } else {
+                // No @ found, return original error
+                T::parse(text, bot_name)
+            }
+        } else {
+            // Not a command, return original error
+            T::parse(text, bot_name)
+        }
+    })
+}
 
 pub async fn message_handler(bot: Bot, msg: Message) -> Result<(), RequestError> {
     if let Some(text) = msg.text() {
@@ -32,7 +52,12 @@ pub async fn message_handler(bot: Bot, msg: Message) -> Result<(), RequestError>
             }
         }
         
-        if let Ok(cmd) = AdminCommand::parse(text, "rspamd-bot") {
+        // Try to parse as admin command, handling both formats:
+        // 1. /command (in private chats)
+        // 2. /command@botname (in group chats)
+        let cmd_result = parse_command_with_botname::<AdminCommand>(text, "rspamd-bot");
+        
+        if let Ok(cmd) = cmd_result {
             handle_admin_command(bot.clone(), msg.clone(), cmd).await?;
         } else {
             let _ = handle_message(bot.clone(), msg.clone()).await;
@@ -403,7 +428,7 @@ pub async fn run_dispatcher(bot: Bot) {
     }
 
     let commands:Vec<BotCommand> = AdminCommand::bot_commands();
-    let _ = bot.set_my_commands(commands).await;
+    let _ = bot.set_my_commands(commands).scope(BotCommandScope::Default).await;
     let handler = dptree::entry()
         .branch(Update::filter_message().endpoint(message_handler))
         .branch(

@@ -73,21 +73,67 @@ Follow these steps to build and run the bot from source:
    ```
 
    This will produce the executable (in `target/release/`) named **`rspamd-telegram-bot`**.
-3. **Install and configure Rspamd** – Ensure you have Rspamd running locally. Copy the provided Lua configuration file for the bot into your Rspamd configuration:
+3. **Install and configure Rspamd** – Ensure you have Rspamd running locally. Copy all the provided configuration files for the bot into your Rspamd configuration:
 
-    * File: `rspamd-config/lua.local.d/telegram.lua` (from this repository) contains the Lua rules for Telegram spam detection.
-    * Copy this file into Rspamd’s local configuration directory (usually `/etc/rspamd/local.d/` or specifically `/etc/rspamd/lua.local.d/` on Linux systems). You may need to create the `lua.local.d` directory if it doesn’t exist. For example:
+    **Important:** Before copying configuration files, backup your existing Rspamd configuration:
+    ```bash
+    sudo cp -r /etc/rspamd/local.d /etc/rspamd/local.d.backup
+    sudo cp -r /etc/rspamd/lua.local.d /etc/rspamd/lua.local.d.backup
+    ```
 
+    **Copy Lua Configuration Files:**
+    * Create the Rspamd local configuration directory (if it doesn't exist):
       ```bash
       sudo mkdir -p /etc/rspamd/lua.local.d
-      sudo cp rspamd-config/lua.local.d/telegram.lua /etc/rspamd/lua.local.d/
       ```
-    * After copying, restart the Rspamd service to load the new rules:
-
+    * Copy the main Telegram configuration files:
       ```bash
-      sudo service rspamd restart   # or use systemctl restart rspamd
+      sudo cp rspamd-config/lua.local.d/telegram_modular.lua /etc/rspamd/lua.local.d/
+      sudo cp rspamd-config/lua.local.d/telegram_simple.lua /etc/rspamd/lua.local.d/
+      sudo cp rspamd-config/lua.local.d/telegram_replies.lua /etc/rspamd/lua.local.d/
+      sudo cp rspamd-config/lua.local.d/whiteblacklist.lua /etc/rspamd/lua.local.d/
       ```
-    * *(The Docker setup in the next section automates this configuration, but for manual installation you must place the Lua file yourself.)*
+
+    **Copy Additional Rspamd Configuration Files:**
+    * Create the local.d directory if it doesn't exist:
+      ```bash
+      sudo mkdir -p /etc/rspamd/local.d
+      ```
+    * Copy the supporting configuration files:
+      ```bash
+      sudo cp rspamd-config/local.d/reputation.conf /etc/rspamd/local.d/
+      sudo cp rspamd-config/local.d/groups.conf /etc/rspamd/local.d/
+      sudo cp rspamd-config/local.d/fuzzy_check.conf /etc/rspamd/local.d/
+      sudo cp rspamd-config/local.d/worker-controller.conf /etc/rspamd/local.d/
+      sudo cp rspamd-config/local.d/worker-fuzzy.conf /etc/rspamd/local.d/
+      sudo cp rspamd-config/local.d/rspamd.conf.local /etc/rspamd/local.d/
+      sudo cp rspamd-config/local.d/actions.conf /etc/rspamd/local.d/
+      sudo cp rspamd-config/local.d/lua.conf /etc/rspamd/local.d/
+      ```
+
+    **Copy Scores Configuration (Optional):**
+    * If you want to customize spam scores:
+      ```bash
+      sudo mkdir -p /etc/rspamd/scores.d
+      sudo cp rspamd-config/scores.d/* /etc/rspamd/scores.d/
+      ```
+
+    **Set Proper File Permissions:**
+    * Ensure the copied files have the correct permissions for Rspamd to read them:
+      ```bash
+      sudo chown -R rspamd:rspamd /etc/rspamd/local.d
+      sudo chown -R rspamd:rspamd /etc/rspamd/lua.local.d
+      sudo chmod -R 644 /etc/rspamd/local.d/*
+      sudo chmod -R 644 /etc/rspamd/lua.local.d/*
+      ```
+
+    **Restart Rspamd:**
+    * After copying all configuration files, restart the Rspamd service to load the new rules:
+      ```bash
+      sudo systemctl restart rspamd   # or use service rspamd restart
+      ```
+
+    * *(The Docker setup in the next section automates this configuration, but for manual installation you must place all these files yourself.)*
 4. **Run Redis** – Make sure Redis server is running on localhost. If it’s not already running, you can start it (on many systems, `redis-server` or using your OS service management). The bot will attempt to connect to `redis://127.0.0.1:6379` by default.
 5. **Set the Telegram token** – Export your Telegram Bot API token as an environment variable so the bot can use it. The bot uses Teloxide’s convention of reading the token from the `TELOXIDE_TOKEN` env variable. For example, in your shell:
 
@@ -96,6 +142,16 @@ Follow these steps to build and run the bot from source:
    ```
 
    (Replace the value with your actual token string from BotFather.)
+
+   **Alternative: Use Environment File:**
+   * You can also copy the environment example file and configure it:
+     ```bash
+     cp env.example .env
+     # Edit .env with your Telegram bot token and other settings
+     nano .env  # or use your preferred editor
+     ```
+   * The `.env` file should contain your `TELOXIDE_TOKEN` and optionally `RSPAMD_PASSWORD` for authentication.
+
 6. **Launch the bot** – Now run the compiled bot program:
 
    ```bash

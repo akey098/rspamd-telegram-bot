@@ -54,7 +54,7 @@ local settings = {
 -- Initialize Redis connection
 local redis_params = lua_redis.parse_redis_server('telegram')
 if not redis_params then
-    rspamd_logger.errx(nil, 'Failed to parse Redis server for telegram module')
+    rspamd_logger.errx(rspamd_config, 'Failed to parse Redis server for telegram module')
     return
 end
 
@@ -83,8 +83,9 @@ local function update_user_reputation(task, user_id, is_spam)
     
     local reputation_key = settings.reputation_key_prefix .. user_id
     local field = is_spam and 'bad' or 'good'
+    local status = is_spam and 'spam' or 'good'
     
-    rspamd_logger.infox(task, 'Updating reputation for user %1: %2 = %3', user_id, field, is_spam and 'spam' or 'good')
+    rspamd_logger.infox(task, 'Updating reputation for user %1: %2 = %3', safe_str(user_id), safe_str(field), safe_str(status))
     
     lua_redis.redis_make_request(task,
         redis_params,
@@ -92,9 +93,9 @@ local function update_user_reputation(task, user_id, is_spam)
         true, -- is write
         function(err)
             if err then
-                rspamd_logger.errx(task, 'Failed to update reputation for user %1: %2', user_id, err)
+                rspamd_logger.errx(task, 'Failed to update reputation for user %1: %2', safe_str(user_id), safe_str(err))
             else
-                rspamd_logger.infox(task, 'Successfully updated reputation for user %1: %2', user_id, field)
+                rspamd_logger.infox(task, 'Successfully updated reputation for user %1: %2', safe_str(user_id), safe_str(field))
             end
         end,
         'HINCRBY',
@@ -125,7 +126,7 @@ local function update_good_reputation(task, user_id)
     
     if hash < 10 then -- 10% chance
         update_user_reputation(task, user_id, false)
-        rspamd_logger.infox(task, 'Updated good reputation for user %1 (hash: %2)', user_id, hash)
+        rspamd_logger.infox(task, 'Updated good reputation for user %1 (hash: %2)', safe_str(user_id), safe_str(hash))
     end
 end
 
@@ -136,7 +137,7 @@ local function get_user_reputation(task, user_id)
     
     local function reputation_cb(err, data)
         if err then
-            rspamd_logger.errx(task, 'Failed to get reputation for user %1: %2', user_id, err)
+            rspamd_logger.errx(task, 'Failed to get reputation for user %1: %2', safe_str(user_id), safe_str(err))
             return 0
         end
         
@@ -144,7 +145,7 @@ local function get_user_reputation(task, user_id)
         local good_count = safe_num(data[2] or 0)
         local reputation = bad_count - good_count
         
-        rspamd_logger.infox(task, 'User %1 reputation: bad=%2, good=%3, total=%4', user_id, bad_count, good_count, reputation)
+        rspamd_logger.infox(task, 'User %1 reputation: bad=%2, good=%3, total=%4', safe_str(user_id), safe_str(bad_count), safe_str(good_count), safe_str(reputation))
         return reputation
     end
     
@@ -206,7 +207,7 @@ local function tg_flood_cb(task)
             update_user_reputation(task, user_id, true)
             
             task:insert_result('TG_FLOOD')
-            rspamd_logger.infox(task, 'TG_FLOOD triggered for user %1, count: %2', user_id, count)
+            rspamd_logger.infox(task, 'TG_FLOOD triggered for user %1, count: %2', safe_str(user_id), safe_str(count))
         end
     end
     
@@ -292,7 +293,7 @@ local function tg_repeat_cb(task)
     local user_id, chat_id = get_user_chat_ids(task)
     if user_id == "" then return end
     
-    rspamd_logger.infox(task, 'TG_REPEAT: Processing message for user %1', user_id)
+            rspamd_logger.infox(task, 'TG_REPEAT: Processing message for user %1', safe_str(user_id))
     
     local user_key = settings.user_prefix .. user_id
     local msg = get_message_text(task)
@@ -306,7 +307,7 @@ local function tg_repeat_cb(task)
         local function get_count_cb(_err, _data)
             if _err then return end
             local count = safe_num(_data)
-            rspamd_logger.infox(task, 'TG_REPEAT: Current count for user %1 is %2', user_id, count)
+            rspamd_logger.infox(task, 'TG_REPEAT: Current count for user %1 is %2', safe_str(user_id), safe_str(count))
             if count > settings.repeated then
                 local chat_key = settings.chat_prefix .. chat_id
                 lua_redis.redis_make_request(task,
@@ -330,12 +331,12 @@ local function tg_repeat_cb(task)
                 update_user_reputation(task, user_id, true)
                 
                 task:insert_result('TG_REPEAT', 1.0)
-                rspamd_logger.infox(task, 'TG_REPEAT triggered for user %1, count: %2', user_id, count)
+                rspamd_logger.infox(task, 'TG_REPEAT triggered for user %1, count: %2', safe_str(user_id), safe_str(count))
             end
         end
         
         if safe_str(data) == msg then
-            rspamd_logger.infox(task, 'TG_REPEAT: Message matches previous for user %1', user_id)
+            rspamd_logger.infox(task, 'TG_REPEAT: Message matches previous for user %1', safe_str(user_id))
             lua_redis.redis_make_request(task,
                 redis_params,
                 user_key,
@@ -345,7 +346,7 @@ local function tg_repeat_cb(task)
                 {user_key, 'eq_msg_count', 1}
             )
         else
-            rspamd_logger.infox(task, 'TG_REPEAT: Message is different for user %1', user_id)
+            rspamd_logger.infox(task, 'TG_REPEAT: Message is different for user %1', safe_str(user_id))
             lua_redis.redis_make_request(task,
                 redis_params,
                 user_key,
@@ -413,7 +414,7 @@ local function tg_suspicious_cb(task)
             update_user_reputation(task, user_id, true)
             
             task:insert_result('TG_SUSPICIOUS', 1.0)
-            rspamd_logger.infox(task, 'TG_SUSPICIOUS triggered for user %1, total: %2', user_id, total)
+            rspamd_logger.infox(task, 'TG_SUSPICIOUS triggered for user %1, total: %2', safe_str(user_id), safe_str(total))
         end
     end
     
@@ -519,7 +520,7 @@ local function tg_ban_cb(task)
                 )
                 
                 task:insert_result('TG_BAN', 1.0)
-                rspamd_logger.infox(task, 'TG_BAN triggered for user %1, rep: %2, ban count: %3', user_id, total, banned_q + 1)
+                rspamd_logger.infox(task, 'TG_BAN triggered for user %1, rep: %2, ban count: %3', safe_str(user_id), safe_str(total), safe_str(banned_q + 1))
             end
             
             lua_redis.redis_make_request(task,
@@ -572,7 +573,7 @@ local function tg_perm_ban_cb(task)
             update_user_reputation(task, user_id, true)
             
             task:insert_result('TG_PERM_BAN', 1.0)
-            rspamd_logger.infox(task, 'TG_PERM_BAN triggered for user %1, banned_q: %2', user_id, banned_q)
+            rspamd_logger.infox(task, 'TG_PERM_BAN triggered for user %1, banned_q: %2', safe_str(user_id), safe_str(banned_q))
         end
     end
     
@@ -600,7 +601,7 @@ local function whitelist_user_cb(task)
         end
         if data then
             task:insert_result('WHITELIST_USER', 1.0)
-            rspamd_logger.infox(task, 'WHITELIST_USER triggered for user %1', user_id)
+            rspamd_logger.infox(task, 'WHITELIST_USER triggered for user %1', safe_str(user_id))
         end
     end
     
@@ -628,7 +629,7 @@ local function blacklist_user_cb(task)
         end
         if data then
             task:insert_result('BLACKLIST_USER', 1.0)
-            rspamd_logger.infox(task, 'BLACKLIST_USER triggered for user %1', user_id)
+            rspamd_logger.infox(task, 'BLACKLIST_USER triggered for user %1', safe_str(user_id))
         end
     end
     
@@ -677,7 +678,7 @@ local function whitelist_word_cb(task)
     
     if count > 0 then
         task:insert_result('WHITELIST_WORD', count)
-        rspamd_logger.infox(task, 'WHITELIST_WORD triggered for user %1, count: %2', user_id, count)
+        rspamd_logger.infox(task, 'WHITELIST_WORD triggered for user %1, count: %2', safe_str(user_id), safe_str(count))
     end
 end
 
@@ -716,7 +717,7 @@ local function blacklist_word_cb(task)
     
     if count > 0 then
         task:insert_result('BLACKLIST_WORD', count)
-        rspamd_logger.infox(task, 'BLACKLIST_WORD triggered for user %1, count: %2', user_id, count)
+        rspamd_logger.infox(task, 'BLACKLIST_WORD triggered for user %1, count: %2', safe_str(user_id), safe_str(count))
     end
 end
 
