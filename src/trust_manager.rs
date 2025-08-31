@@ -117,6 +117,21 @@ impl TrustManager {
         Ok(true)
     }
 
+    /// Check if a user can create a trusted message without incrementing (for testing)
+    pub async fn can_create_trusted_message_check_only(&self, user_id: UserId) -> Result<bool, Box<dyn Error + Send + Sync>> {
+        if !reply_aware::ENABLE_RATE_LIMITING {
+            return Ok(true);
+        }
+        
+        let mut conn = self.redis_client.get_connection()?;
+        let rate_key = format!("{}{}", rate_limit::TRUSTED_MESSAGE_RATE_PREFIX, user_id.0);
+        
+        // Check current count without incrementing
+        let current_count: u32 = conn.get(&rate_key).unwrap_or(0);
+        
+        Ok(current_count < reply_aware::MAX_TRUSTED_MESSAGES_PER_HOUR)
+    }
+
     /// Check if a user can reply to trusted messages (rate limiting)
     pub async fn can_reply_to_trusted(&self, user_id: UserId) -> Result<bool, Box<dyn Error + Send + Sync>> {
         if !reply_aware::ENABLE_RATE_LIMITING {

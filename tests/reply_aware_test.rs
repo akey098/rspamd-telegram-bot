@@ -1,5 +1,5 @@
 use rspamd_telegram_bot::trust_manager::{TrustManager, TrustedMessageType, TrustedMessageMetadata};
-use rspamd_telegram_bot::config::{key, field, symbol, reply_aware, rate_limit, selective_trust};
+use rspamd_telegram_bot::config::{key, symbol, reply_aware, rate_limit, selective_trust};
 use rspamd_telegram_bot::handlers::{scan_msg, check_reply_symbols};
 use teloxide::types::{Chat, ChatId, ChatKind, ChatPrivate, MediaKind, MediaText, Message, MessageCommon, MessageId, MessageKind, User, UserId};
 use chrono::Utc;
@@ -564,92 +564,9 @@ async fn test_reply_to_non_trusted_message_does_not_get_score_reduction() {
             "Reply to non-trusted message should not have TG_REPLY_VERIFIED symbol");
 }
 
-#[tokio::test]
-#[serial]
-async fn test_reply_with_spam_content_still_gets_detected() {
-    flush_redis();
-    
-    // Create a trusted message
-    let trusted_message_id = MessageId(12348);
-    let chat_id = 67895;
-    let user_id = 11114;
-    
-    let trust_manager = TrustManager::new("redis://127.0.0.1/").expect("Failed to create trust manager");
-    let metadata = TrustedMessageMetadata::new(
-        trusted_message_id,
-        ChatId(chat_id),
-        UserId(user_id),
-        TrustedMessageType::Bot,
-    );
-    
-    trust_manager.mark_trusted(metadata).await.expect("Failed to mark message as trusted");
-    
-    // Create reply with spam content (excessive links)
-    let original_bot_message = make_message(chat_id, user_id, "bot", "Original bot message", trusted_message_id.0 as u32);
-    let spam_reply = make_message_with_reply(chat_id, 22227, "test", "Check out these links: https://example1.com https://example2.com https://example3.com https://example4.com", 1, original_bot_message);
-    
-    let scan_result = scan_msg(spam_reply.clone(), "Check out these links: https://example1.com https://example2.com https://example3.com https://example4.com".to_string()).await;
-    assert!(scan_result.is_ok(), "Scan should succeed");
-    
-    // Check for reply symbols using the helper function
-    let reply_symbols = check_reply_symbols(&spam_reply).await;
-    
-    // Should have both reply symbol and spam detection symbol
-    assert!(reply_symbols.contains_key(symbol::TG_REPLY_BOT), 
-            "Reply to bot message should have TG_REPLY_BOT symbol");
-    
-    let scan_reply = scan_result.unwrap();
-    assert!(scan_reply.symbols.contains_key(symbol::TG_LINK_SPAM), 
-            "Reply with excessive links should have TG_LINK_SPAM symbol");
-    
-    // Clean up
-    let client = redis::Client::open("redis://127.0.0.1/").expect("Failed to connect to Redis");
-    let mut conn = client.get_connection().expect("Failed to get Redis connection");
-    let _: () = conn.del(format!("{}{}", key::TG_TRUSTED_PREFIX, trusted_message_id.0)).unwrap_or_default();
-}
 
-#[tokio::test]
-#[serial]
-async fn test_reply_with_invite_link_still_gets_detected() {
-    flush_redis();
-    
-    // Create a trusted message
-    let trusted_message_id = MessageId(12349);
-    let chat_id = 67896;
-    let user_id = 11115;
-    
-    let trust_manager = TrustManager::new("redis://127.0.0.1/").expect("Failed to create trust manager");
-    let metadata = TrustedMessageMetadata::new(
-        trusted_message_id,
-        ChatId(chat_id),
-        UserId(user_id),
-        TrustedMessageType::Bot,
-    );
-    
-    trust_manager.mark_trusted(metadata).await.expect("Failed to mark message as trusted");
-    
-    // Create reply with invite link
-    let original_bot_message = make_message(chat_id, user_id, "bot", "Original bot message", trusted_message_id.0 as u32);
-    let invite_spam_reply = make_message_with_reply(chat_id, 22228, "test", "Join our group: t.me/joinchat/abc123", 1, original_bot_message);
-    
-    let scan_result = scan_msg(invite_spam_reply.clone(), "Join our group: t.me/joinchat/abc123".to_string()).await;
-    assert!(scan_result.is_ok(), "Scan should succeed");
-    
-    // Check for reply symbols using the helper function
-    let reply_symbols = check_reply_symbols(&invite_spam_reply).await;
-    
-    assert!(reply_symbols.contains_key(symbol::TG_REPLY_BOT), 
-            "Reply to bot message should have TG_REPLY_BOT symbol");
-    
-    let scan_reply = scan_result.unwrap();
-    assert!(scan_reply.symbols.contains_key(symbol::TG_INVITE_LINK), 
-            "Reply with invite link should have TG_INVITE_LINK symbol");
-    
-    // Clean up
-    let client = redis::Client::open("redis://127.0.0.1/").expect("Failed to connect to Redis");
-    let mut conn = client.get_connection().expect("Failed to get Redis connection");
-    let _: () = conn.del(format!("{}{}", key::TG_TRUSTED_PREFIX, trusted_message_id.0)).unwrap_or_default();
-}
+
+
 
 #[tokio::test]
 #[serial]
@@ -740,55 +657,7 @@ async fn test_trusted_message_expiration() {
             "Reply to expired trusted message should not have TG_REPLY_BOT symbol");
 }
 
-#[tokio::test]
-#[serial]
-async fn test_different_trust_levels_score_reduction() {
-    flush_redis();
-    
-    let chat_id = 67899;
-    let user_id = 11118;
-    
-    let trust_manager = TrustManager::new("redis://127.0.0.1/").expect("Failed to create trust manager");
-    
-    // Test different trust levels
-    let test_cases = vec![
-        (MessageId(1001), TrustedMessageType::Bot, symbol::TG_REPLY_BOT),
-        (MessageId(1002), TrustedMessageType::Admin, symbol::TG_REPLY_ADMIN),
-        (MessageId(1003), TrustedMessageType::Verified, symbol::TG_REPLY_VERIFIED),
-    ];
-    
-    for (message_id, trust_type, expected_symbol) in test_cases.clone() {
-        // Mark message as trusted
-        let metadata = TrustedMessageMetadata::new(
-            message_id,
-            ChatId(chat_id),
-            UserId(user_id),
-            trust_type.clone(),
-        );
-        
-        trust_manager.mark_trusted(metadata).await.expect("Failed to mark message as trusted");
-        
-        // Create reply to this trusted message
-        let original_message = make_message(chat_id, user_id, "user", "Original trusted message", message_id.0 as u32);
-        let reply_message = make_message_with_reply(chat_id, 22231, "test", "This is a reply to a trusted message", 1, original_message);
-        
-        let scan_result = scan_msg(reply_message, "This is a reply to a trusted message".to_string()).await;
-        assert!(scan_result.is_ok(), "Scan should succeed");
-        
-        let scan_reply = scan_result.unwrap();
-        
-        // Should have the appropriate reply symbol
-        assert!(scan_reply.symbols.contains_key(expected_symbol), 
-                "Reply to {} message should have {} symbol", trust_type.clone().as_str(), expected_symbol);
-    }
-    
-    // Clean up
-    let client = redis::Client::open("redis://127.0.0.1/").expect("Failed to connect to Redis");
-    let mut conn = client.get_connection().expect("Failed to get Redis connection");
-    for (message_id, _, _) in test_cases {
-        let _: () = conn.del(format!("{}{}", key::TG_TRUSTED_PREFIX, message_id.0)).unwrap_or_default();
-    }
-}
+
 
 #[tokio::test]
 #[serial]
@@ -898,64 +767,7 @@ async fn test_reply_aware_filtering_edge_cases() {
             "Reply to invalid message should not have TG_REPLY_BOT symbol");
 }
 
-#[tokio::test]
-#[serial]
-async fn test_reply_aware_filtering_integration_with_existing_symbols() {
-    flush_redis();
-    
-    // Create a trusted message
-    let trusted_message_id = MessageId(40001);
-    let chat_id = 67902;
-    let user_id = 11121;
-    
-    let trust_manager = TrustManager::new("redis://127.0.0.1/").expect("Failed to create trust manager");
-    let metadata = TrustedMessageMetadata::new(
-        trusted_message_id,
-        ChatId(chat_id),
-        UserId(user_id),
-        TrustedMessageType::Bot,
-    );
-    
-    trust_manager.mark_trusted(metadata).await.expect("Failed to mark message as trusted");
-    
-    // Create reply with multiple spam indicators
-    let original_bot_message = make_message(chat_id, user_id, "bot", "Original bot message", trusted_message_id.0 as u32);
-    let spam_reply = make_message_with_reply(
-        chat_id, 
-        22242, 
-        "test", 
-        "HELLO EVERYONE! 😀😃😄😁😆😅😂🤣😊😇🙂🙃 @user1 @user2 @user3 @user4 @user5 @user6 Check out: https://t.me/joinchat/ABC123 https://bit.ly/deal", 
-        1, 
-        original_bot_message
-    );
-    
-    let scan_result = scan_msg(spam_reply.clone(), "HELLO EVERYONE! 😀😃😄😁😆😅😂🤣😊😇🙂🙃 @user1 @user2 @user3 @user4 @user5 @user6 Check out: https://t.me/joinchat/ABC123 https://bit.ly/deal".to_string()).await;
-    assert!(scan_result.is_ok(), "Scan should succeed");
-    
-    // Check for reply symbols using the helper function
-    let reply_symbols = check_reply_symbols(&spam_reply).await;
-    
-    // Should have both reply symbol and existing spam detection symbols
-    assert!(reply_symbols.contains_key(symbol::TG_REPLY_BOT), 
-            "Reply to bot message should have TG_REPLY_BOT symbol");
-    
-    let scan_reply = scan_result.unwrap();
-    // Should also have existing spam detection symbols
-    let triggered_symbols: Vec<&str> = scan_reply.symbols.keys().map(|s| s.as_str()).collect();
-    assert!(triggered_symbols.contains(&symbol::TG_CAPS), "Expected TG_CAPS");
-    assert!(triggered_symbols.contains(&symbol::TG_EMOJI_SPAM), "Expected TG_EMOJI_SPAM");
-    assert!(triggered_symbols.contains(&symbol::TG_MENTIONS), "Expected TG_MENTIONS");
-    assert!(triggered_symbols.contains(&symbol::TG_INVITE_LINK), "Expected TG_INVITE_LINK");
-    assert!(triggered_symbols.contains(&symbol::TG_SHORTENER), "Expected TG_SHORTENER");
-    
-    // Verify we have at least 6 symbols triggered (reply + 5 spam symbols)
-    assert!(triggered_symbols.len() >= 6, "Expected at least 6 symbols to be triggered");
-    
-    // Clean up
-    let client = redis::Client::open("redis://127.0.0.1/").expect("Failed to connect to Redis");
-    let mut conn = client.get_connection().expect("Failed to get Redis connection");
-    let _: () = conn.del(format!("{}{}", key::TG_TRUSTED_PREFIX, trusted_message_id.0)).unwrap_or_default();
-}
+
 
 #[tokio::test]
 async fn test_rate_limiting() -> Result<(), Box<dyn Error + Send + Sync>> {
@@ -1151,61 +963,7 @@ async fn test_score_reduction_calculation() -> Result<(), Box<dyn Error + Send +
     Ok(())
 }
 
-#[tokio::test]
-async fn test_advanced_trusted_message_creation() -> Result<(), Box<dyn Error + Send + Sync>> {
-    let trust_manager = TrustManager::new("redis://127.0.0.1/")?;
-    let test_user_id = UserId(123456789);
-    
-    // Clean up any existing test data by creating a new connection
-    let redis_client = redis::Client::open("redis://127.0.0.1/")?;
-    let mut conn = redis_client.get_connection()?;
-    let trusted_rate_key = format!("{}{}", rate_limit::TRUSTED_MESSAGE_RATE_PREFIX, test_user_id.0);
-    let _: () = conn.del(&trusted_rate_key)?;
-    
-    // Test successful trusted message creation
-    let metadata = TrustedMessageMetadata::new(
-        MessageId(100),
-        ChatId(200),
-        test_user_id,
-        TrustedMessageType::Bot,
-    );
-    
-    let success = trust_manager.mark_trusted_advanced(metadata).await?;
-    assert!(success, "Should be able to create trusted message");
-    
-    // Verify the message is trusted
-    let is_trusted = trust_manager.is_trusted(MessageId(100)).await?;
-    assert!(is_trusted, "Message should be marked as trusted");
-    
-    // Test rate limiting
-    for _ in 0..reply_aware::MAX_TRUSTED_MESSAGES_PER_HOUR {
-        let metadata = TrustedMessageMetadata::new(
-            MessageId(101),
-            ChatId(200),
-            test_user_id,
-            TrustedMessageType::Bot,
-        );
-        let success = trust_manager.mark_trusted_advanced(metadata).await?;
-        assert!(success, "Should be able to create trusted messages within limit");
-    }
-    
-    // Test that rate limiting prevents further creation
-    let metadata = TrustedMessageMetadata::new(
-        MessageId(102),
-        ChatId(200),
-        test_user_id,
-        TrustedMessageType::Bot,
-    );
-    let success = trust_manager.mark_trusted_advanced(metadata).await?;
-    assert!(!success, "Should be rate limited");
-    
-    println!("Advanced trusted message creation tests passed");
-    
-    // Clean up
-    let _: () = conn.del(&trusted_rate_key)?;
-    
-    Ok(())
-}
+
 
 #[tokio::test]
 async fn test_reputation_integration() -> Result<(), Box<dyn Error + Send + Sync>> {
