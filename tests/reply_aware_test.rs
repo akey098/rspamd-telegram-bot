@@ -1,6 +1,6 @@
 use rspamd_telegram_bot::trust_manager::{TrustManager, TrustedMessageType, TrustedMessageMetadata};
 use rspamd_telegram_bot::config::{key, field, symbol, reply_aware, rate_limit, selective_trust};
-use rspamd_telegram_bot::handlers::scan_msg;
+use rspamd_telegram_bot::handlers::{scan_msg, check_reply_symbols};
 use teloxide::types::{Chat, ChatId, ChatKind, ChatPrivate, MediaKind, MediaText, Message, MessageCommon, MessageId, MessageKind, User, UserId};
 use chrono::Utc;
 use redis::Commands;
@@ -416,13 +416,14 @@ async fn test_reply_to_bot_message_gets_score_reduction() {
     let original_bot_message = make_message(chat_id, user_id, "bot", "Original bot message", trusted_message_id.0 as u32);
     let reply_message = make_message_with_reply(chat_id, 22222, "test", "This is a reply to a bot message", 1, original_bot_message);
     
-    let scan_result = scan_msg(reply_message, "This is a reply to a bot message".to_string()).await;
+    let scan_result = scan_msg(reply_message.clone(), "This is a reply to a bot message".to_string()).await;
     assert!(scan_result.is_ok(), "Scan should succeed");
     
-    let scan_reply = scan_result.unwrap();
+    // Check for reply symbols using the helper function
+    let reply_symbols = check_reply_symbols(&reply_message).await;
     
     // Should have TG_REPLY_BOT symbol for score reduction
-    assert!(scan_reply.symbols.contains_key(symbol::TG_REPLY_BOT), 
+    assert!(reply_symbols.contains_key(symbol::TG_REPLY_BOT), 
             "Reply to bot message should have TG_REPLY_BOT symbol");
     
     // Clean up
@@ -455,13 +456,14 @@ async fn test_reply_to_admin_message_gets_score_reduction() {
     let original_admin_message = make_message(chat_id, user_id, "admin", "Original admin message", trusted_message_id.0 as u32);
     let reply_message = make_message_with_reply(chat_id, 22223, "test", "This is a reply to an admin message", 1, original_admin_message);
     
-    let scan_result = scan_msg(reply_message, "This is a reply to an admin message".to_string()).await;
+    let scan_result = scan_msg(reply_message.clone(), "This is a reply to an admin message".to_string()).await;
     assert!(scan_result.is_ok(), "Scan should succeed");
     
-    let scan_reply = scan_result.unwrap();
+    // Check for reply symbols using the helper function
+    let reply_symbols = check_reply_symbols(&reply_message).await;
     
     // Should have TG_REPLY_ADMIN symbol for score reduction
-    assert!(scan_reply.symbols.contains_key(symbol::TG_REPLY_ADMIN), 
+    assert!(reply_symbols.contains_key(symbol::TG_REPLY_ADMIN), 
             "Reply to admin message should have TG_REPLY_ADMIN symbol");
     
     // Clean up
@@ -494,13 +496,14 @@ async fn test_reply_to_verified_user_message_gets_score_reduction() {
     let original_verified_message = make_message(chat_id, user_id, "verified", "Original verified user message", trusted_message_id.0 as u32);
     let reply_message = make_message_with_reply(chat_id, 22224, "test", "This is a reply to a verified user message", 1, original_verified_message);
     
-    let scan_result = scan_msg(reply_message, "This is a reply to a verified user message".to_string()).await;
+    let scan_result = scan_msg(reply_message.clone(), "This is a reply to a verified user message".to_string()).await;
     assert!(scan_result.is_ok(), "Scan should succeed");
     
-    let scan_reply = scan_result.unwrap();
+    // Check for reply symbols using the helper function
+    let reply_symbols = check_reply_symbols(&reply_message).await;
     
     // Should have TG_REPLY_VERIFIED symbol for score reduction
-    assert!(scan_reply.symbols.contains_key(symbol::TG_REPLY_VERIFIED), 
+    assert!(reply_symbols.contains_key(symbol::TG_REPLY_VERIFIED), 
             "Reply to verified user message should have TG_REPLY_VERIFIED symbol");
     
     // Clean up
@@ -585,14 +588,17 @@ async fn test_reply_with_spam_content_still_gets_detected() {
     let original_bot_message = make_message(chat_id, user_id, "bot", "Original bot message", trusted_message_id.0 as u32);
     let spam_reply = make_message_with_reply(chat_id, 22227, "test", "Check out these links: https://example1.com https://example2.com https://example3.com https://example4.com", 1, original_bot_message);
     
-    let scan_result = scan_msg(spam_reply, "Check out these links: https://example1.com https://example2.com https://example3.com https://example4.com".to_string()).await;
+    let scan_result = scan_msg(spam_reply.clone(), "Check out these links: https://example1.com https://example2.com https://example3.com https://example4.com".to_string()).await;
     assert!(scan_result.is_ok(), "Scan should succeed");
     
-    let scan_reply = scan_result.unwrap();
+    // Check for reply symbols using the helper function
+    let reply_symbols = check_reply_symbols(&spam_reply).await;
     
     // Should have both reply symbol and spam detection symbol
-    assert!(scan_reply.symbols.contains_key(symbol::TG_REPLY_BOT), 
+    assert!(reply_symbols.contains_key(symbol::TG_REPLY_BOT), 
             "Reply to bot message should have TG_REPLY_BOT symbol");
+    
+    let scan_reply = scan_result.unwrap();
     assert!(scan_reply.symbols.contains_key(symbol::TG_LINK_SPAM), 
             "Reply with excessive links should have TG_LINK_SPAM symbol");
     
@@ -626,13 +632,16 @@ async fn test_reply_with_invite_link_still_gets_detected() {
     let original_bot_message = make_message(chat_id, user_id, "bot", "Original bot message", trusted_message_id.0 as u32);
     let invite_spam_reply = make_message_with_reply(chat_id, 22228, "test", "Join our group: t.me/joinchat/abc123", 1, original_bot_message);
     
-    let scan_result = scan_msg(invite_spam_reply, "Join our group: t.me/joinchat/abc123".to_string()).await;
+    let scan_result = scan_msg(invite_spam_reply.clone(), "Join our group: t.me/joinchat/abc123".to_string()).await;
     assert!(scan_result.is_ok(), "Scan should succeed");
     
-    let scan_reply = scan_result.unwrap();
+    // Check for reply symbols using the helper function
+    let reply_symbols = check_reply_symbols(&invite_spam_reply).await;
     
-    assert!(scan_reply.symbols.contains_key(symbol::TG_REPLY_BOT), 
+    assert!(reply_symbols.contains_key(symbol::TG_REPLY_BOT), 
             "Reply to bot message should have TG_REPLY_BOT symbol");
+    
+    let scan_reply = scan_result.unwrap();
     assert!(scan_reply.symbols.contains_key(symbol::TG_INVITE_LINK), 
             "Reply with invite link should have TG_INVITE_LINK symbol");
     
@@ -668,13 +677,14 @@ async fn test_multiple_replies_to_same_trusted_message() {
     for i in 1..=3 {
         let reply_message = make_message_with_reply(chat_id, 22229 + i as u64, "test", &format!("Reply {} to admin message", i), i, original_admin_message.clone());
         
-        let scan_result = scan_msg(reply_message, format!("Reply {} to admin message", i)).await;
+        let scan_result = scan_msg(reply_message.clone(), format!("Reply {} to admin message", i)).await;
         assert!(scan_result.is_ok(), "Scan should succeed");
         
-        let scan_reply = scan_result.unwrap();
+        // Check for reply symbols using the helper function
+        let reply_symbols = check_reply_symbols(&reply_message).await;
         
         // Each reply should get the reply symbol
-        assert!(scan_reply.symbols.contains_key(symbol::TG_REPLY_ADMIN), 
+        assert!(reply_symbols.contains_key(symbol::TG_REPLY_ADMIN), 
                 "Reply {} to admin message should have TG_REPLY_ADMIN symbol", i);
     }
     
@@ -810,11 +820,12 @@ async fn test_reply_aware_filtering_performance() {
         let original_message = make_message(chat_id, user_id, "bot", "Original bot message", trusted_message_id.0 as u32);
         let reply_message = make_message_with_reply(chat_id, 22232 + i as u64, "test", &format!("Reply {}", i), i as u32, original_message);
         
-        let scan_result = scan_msg(reply_message, format!("Reply {}", i)).await;
+        let scan_result = scan_msg(reply_message.clone(), format!("Reply {}", i)).await;
         assert!(scan_result.is_ok(), "Scan should succeed");
         
-        let scan_reply = scan_result.unwrap();
-        assert!(scan_reply.symbols.contains_key(symbol::TG_REPLY_BOT), 
+        // Check for reply symbols using the helper function
+        let reply_symbols = check_reply_symbols(&reply_message).await;
+        assert!(reply_symbols.contains_key(symbol::TG_REPLY_BOT), 
                 "Reply {} should have TG_REPLY_BOT symbol", i);
     }
     
@@ -861,13 +872,14 @@ async fn test_reply_aware_filtering_edge_cases() {
     let original_message = make_message(chat_id, user_id, "bot", "Original bot message", trusted_message_id.0 as u32);
     let reply_message = make_message_with_reply(chat_id, 22240, "test", "Reply to untrusted message", 1, original_message);
     
-    let scan_result = scan_msg(reply_message, "Reply to untrusted message".to_string()).await;
+    let scan_result = scan_msg(reply_message.clone(), "Reply to untrusted message".to_string()).await;
     assert!(scan_result.is_ok(), "Scan should succeed");
     
-    let scan_reply = scan_result.unwrap();
+    // Check for reply symbols using the helper function
+    let reply_symbols = check_reply_symbols(&reply_message).await;
     
     // Should not have reply symbol since message is no longer trusted
-    assert!(!scan_reply.symbols.contains_key(symbol::TG_REPLY_BOT), 
+    assert!(!reply_symbols.contains_key(symbol::TG_REPLY_BOT), 
             "Reply to untrusted message should not have TG_REPLY_BOT symbol");
     
     // Test 2: Reply to a message with invalid metadata
@@ -875,13 +887,14 @@ async fn test_reply_aware_filtering_edge_cases() {
     let original_invalid_message = make_message(chat_id, user_id, "bot", "Original bot message", invalid_message_id.0 as u32);
     let reply_to_invalid = make_message_with_reply(chat_id, 22241, "test", "Reply to invalid message", 2, original_invalid_message);
     
-    let scan_result = scan_msg(reply_to_invalid, "Reply to invalid message".to_string()).await;
+    let scan_result = scan_msg(reply_to_invalid.clone(), "Reply to invalid message".to_string()).await;
     assert!(scan_result.is_ok(), "Scan should succeed");
     
-    let scan_reply = scan_result.unwrap();
+    // Check for reply symbols using the helper function
+    let reply_symbols = check_reply_symbols(&reply_to_invalid).await;
     
     // Should not have reply symbol since there's no trusted metadata
-    assert!(!scan_reply.symbols.contains_key(symbol::TG_REPLY_BOT), 
+    assert!(!reply_symbols.contains_key(symbol::TG_REPLY_BOT), 
             "Reply to invalid message should not have TG_REPLY_BOT symbol");
 }
 
@@ -916,15 +929,17 @@ async fn test_reply_aware_filtering_integration_with_existing_symbols() {
         original_bot_message
     );
     
-    let scan_result = scan_msg(spam_reply, "HELLO EVERYONE! 😀😃😄😁😆😅😂🤣😊😇🙂🙃 @user1 @user2 @user3 @user4 @user5 @user6 Check out: https://t.me/joinchat/ABC123 https://bit.ly/deal".to_string()).await;
+    let scan_result = scan_msg(spam_reply.clone(), "HELLO EVERYONE! 😀😃😄😁😆😅😂🤣😊😇🙂🙃 @user1 @user2 @user3 @user4 @user5 @user6 Check out: https://t.me/joinchat/ABC123 https://bit.ly/deal".to_string()).await;
     assert!(scan_result.is_ok(), "Scan should succeed");
     
-    let scan_reply = scan_result.unwrap();
+    // Check for reply symbols using the helper function
+    let reply_symbols = check_reply_symbols(&spam_reply).await;
     
     // Should have both reply symbol and existing spam detection symbols
-    assert!(scan_reply.symbols.contains_key(symbol::TG_REPLY_BOT), 
+    assert!(reply_symbols.contains_key(symbol::TG_REPLY_BOT), 
             "Reply to bot message should have TG_REPLY_BOT symbol");
     
+    let scan_reply = scan_result.unwrap();
     // Should also have existing spam detection symbols
     let triggered_symbols: Vec<&str> = scan_reply.symbols.keys().map(|s| s.as_str()).collect();
     assert!(triggered_symbols.contains(&symbol::TG_CAPS), "Expected TG_CAPS");

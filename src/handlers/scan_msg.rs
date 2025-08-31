@@ -4,8 +4,9 @@ use teloxide::prelude::*;
 use get_if_addrs::{get_if_addrs, IfAddr};
 use crate::trust_manager::{TrustManager, TrustedMessageType};
 use crate::neural_manager::NeuralManager;
-use crate::config::neural;
+use crate::config::{neural, symbol};
 use log;
+use std::collections::HashMap;
 
 /// Scan a Telegram message: real Rspamd first, heuristic fallback.
 pub async fn scan_msg(msg: Message, text: String) -> Result<RspamdScanReply, RspamdError> {
@@ -277,6 +278,37 @@ pub async fn scan_msg_with_advanced_info(msg: Message, text: String) -> Result<(
     }
     
     Ok((scan_result, reply_type, spam_patterns))
+}
+
+/// Helper function to check if a message has reply symbols (for testing)
+pub async fn check_reply_symbols(msg: &Message) -> HashMap<String, f64> {
+    let mut reply_symbols = HashMap::new();
+    
+    if let Some(reply_to_message) = msg.reply_to_message() {
+        let trust_manager = TrustManager::new("redis://127.0.0.1/")
+            .unwrap_or_else(|_| panic!("Failed to create trust manager"));
+        
+        // Check if the replied-to message is trusted
+        if let Ok(true) = trust_manager.is_trusted(reply_to_message.id).await {
+            if let Ok(Some(metadata)) = trust_manager.get_trusted_metadata(reply_to_message.id).await {
+                // Add reply symbols based on message type
+                reply_symbols.insert(symbol::TG_REPLY.to_string(), metadata.message_type.score_reduction());
+                match metadata.message_type {
+                    TrustedMessageType::Bot => {
+                        reply_symbols.insert(symbol::TG_REPLY_BOT.to_string(), -3.0);
+                    },
+                    TrustedMessageType::Admin => {
+                        reply_symbols.insert(symbol::TG_REPLY_ADMIN.to_string(), -2.0);
+                    },
+                    TrustedMessageType::Verified => {
+                        reply_symbols.insert(symbol::TG_REPLY_VERIFIED.to_string(), -1.0);
+                    },
+                }
+            }
+        }
+    }
+    
+    reply_symbols
 }
 
 pub fn detect_local_ipv4() -> Option<String> {
